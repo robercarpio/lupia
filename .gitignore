@@ -1,0 +1,12 @@
+**/*.pdf
+**/*.xlxs
+**/*.csv
+**/*.xls
+**/*.ods
+**/*.parquet
+**/*.avro
+**/*.log
+**/*.csv.gz
+**/*.json.gz
+**/*.tar.gz
+**/*.zip
