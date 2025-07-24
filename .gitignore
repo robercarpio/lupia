@@ -10,3 +10,4 @@
 **/*.json.gz
 **/*.tar.gz
 **/*.zip
+**/*.test
