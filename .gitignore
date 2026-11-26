@@ -1,5 +1,5 @@
 **/*.pdf
-**/*.xlxs
+**/*.xlsx
 **/*.csv
 **/*.xls
 **/*.ods
@@ -11,6 +11,13 @@
 **/*.tar.gz
 **/*.zip
 **/*.test
+
+# Challenge raw mirror & local artifacts
+/databricks_data/
+manifest.mf
+/outputs/
+.env*
+!.env.example
 
 ### AzureFunctions ###
 # Azure Functions localsettings file

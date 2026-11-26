@@ -1,0 +1,4 @@
+# Extra packages not pre-installed on Databricks Serverless (Python 3.10.12 / Spark 4.2.0)
+lightgbm>=4.0.0
+openai>=1.0.0
+psycopg2-binary>=2.9.9
