@@ -1,0 +1,48 @@
+# Databricks Asset Bundle configuration for IndesIAhack 2026 - RBE Anomaly Detection.
+# Usage: databricks bundle validate -p adb-7405605482140954
+
+bundle:
+  name: indesia
+
+sync:
+  include:
+    - databricks/**
+    - notebooks/**
+    - sql/**
+  exclude:
+    - "**/__pycache__"
+    - "**/*.pyc"
+    - databricks_data/**
+    - outputs/**
+    - backend/**
+    - frontend/**
+
+resources:
+  jobs:
+    rb06_populate_uc_rbe:
+      name: rb06_populate_uc_rbe_gold
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+      tasks:
+        - task_key: populate_uc_rbe
+          environment_key: default
+          notebook_task:
+            notebook_path: ./databricks/notebooks/populate_uc_rbe.py
+            base_parameters:
+              mode: "from_stage"
+              llm_endpoint: "databricks-claude-haiku-5-5"
+              llm_top_n: "0"
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://adb-7405605482140954.14.azuredatabricks.net
+  shared:
+    mode: production
+    workspace:
+      host: https://adb-7405605482140954.14.azuredatabricks.net
+      root_path: /Workspace/Shared/rb06_anomaly_detection
