@@ -1,0 +1,8 @@
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
+databricks-sql-connector==4.10.0
+databricks-sdk==0.171.0
+cachetools==8.0.3
+openai==3.60.0
+pydantic==2.14.4
+reportlab==4.4.4

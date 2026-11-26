@@ -1,0 +1,33 @@
+# Databricks Apps · backend RBE anomalías de ventas
+# Recursos que hay que declarar en la app (Compute → Apps → la app → Edit → App resources):
+#   sql-warehouse            → SQL Warehouse, permiso "Can use"
+#   azure-openai-endpoint    → Secret (scope/clave con la URL https://<recurso>.openai.azure.com)
+#   azure-openai-key         → Secret (API key de Azure OpenAI)
+#   azure-openai-deployment  → Secret (nombre del despliegue del modelo)
+command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
+
+env:
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+  - name: RBE_SCHEMA
+    value: "dat_hack_rb06.rbe"
+  # Copiloto con Azure OpenAI: descomentar cuando existan los secretos y estén declarados como recursos
+  # de la app (si se declaran aquí sin existir, el despliegue falla). Sin ellos, chat y voz van en modo básico.
+  # - name: AZURE_OPENAI_ENDPOINT
+  #   valueFrom: azure-openai-endpoint
+  # - name: AZURE_OPENAI_API_KEY
+  #   valueFrom: azure-openai-key
+  # - name: AZURE_OPENAI_DEPLOYMENT
+  #   valueFrom: azure-openai-deployment
+  - name: AZURE_OPENAI_API_VERSION
+    value: "2024-10-21"
+  - name: CACHE_TTL_SECONDS
+    value: "900"
+  - name: ANOMALY_REFRESH_SECONDS
+    value: "60"
+  - name: SQL_STATEMENT_TIMEOUT_SECONDS
+    value: "120"
+  - name: RBE_PCT_UNITS
+    value: "percent"
+  - name: FRONTEND_DIST
+    value: "static"
