@@ -171,7 +171,7 @@ export default function App() {
       <main className="main">
         {mobile ? (
           mode === 'dashboard' ? (
-            <MobileHeader onHome={goHome} title="Anomalías de ventas" subtitle={`Datos hasta el ${dateShort(meta.dateMax)} · ${sourceLabel}`} theme={theme} onTheme={toggleTheme}
+            <MobileHeader onHome={goHome} subtitle={`Datos hasta el ${dateShort(meta.dateMax)} · ${sourceLabel}`} theme={theme} onTheme={toggleTheme}
                           alerts={alerts} unseen={unseen} onSeen={markSeen} onAlerts={onBell} />
           ) : (
             <MobileHeader onHome={goHome} title="AI Assistant" subtitle="Texto o voz · mismos datos" theme={theme} onTheme={toggleTheme}

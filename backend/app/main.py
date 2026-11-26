@@ -30,8 +30,8 @@ log = logging.getLogger("rbe")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     s = get_settings()
-    log.info("Esquema: %s · warehouse: %s · Azure OpenAI: %s", s.rbe_schema, s.warehouse_id or "SIN CONFIGURAR",
-             "sí" if s.azure_configured else "no (modo determinista)")
+    log.info("Esquema: %s · warehouse: %s · IA: %s", s.rbe_schema, s.warehouse_id or "SIN CONFIGURAR",
+             f"{s.ai_provider} ({s.ai_model})" if s.ai_configured else "no (modo determinista)")
     if os.getenv("WARM_UP_ON_START", "1") != "0":
         # En segundo plano: el servidor acepta peticiones ya; la primera visita encuentra la caché caliente
         # (y, si el warehouse serverless estaba parado, empieza a arrancarlo antes de que llegue nadie).
@@ -99,6 +99,38 @@ async def no_store_api(request: Request, call_next):
         # Ficheros del build con hash en el nombre: el navegador puede guardarlos indefinidamente.
         resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
+
+
+# ── Límite de peticiones por IP (para despliegues públicos sin login, p. ej. Render) ──
+# Solo se activa con RATE_LIMIT=1. Ventana fija de 60 s, en memoria (una instancia).
+if os.getenv("RATE_LIMIT", "0") == "1":
+    import time
+    from collections import defaultdict
+
+    _LIMITS = {"chat": int(os.getenv("RATE_LIMIT_CHAT", "10")), "api": int(os.getenv("RATE_LIMIT_API", "120"))}
+    _hits: dict = defaultdict(lambda: [0.0, 0])
+
+    @app.middleware("http")
+    async def rate_limit(request: Request, call_next):
+        path = request.url.path
+        if not path.startswith("/api/"):
+            return await call_next(request)
+        fwd = request.headers.get("x-forwarded-for", "")
+        ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else "anon")
+        kind = "chat" if path == "/api/chat" else "api"
+        now = time.monotonic()
+        if len(_hits) > 50_000:  # evita que crezca sin límite
+            _hits.clear()
+        win = _hits[(ip, kind)]
+        if now - win[0] >= 60:
+            win[0], win[1] = now, 0
+        win[1] += 1
+        if win[1] > _LIMITS[kind]:
+            msg = "Demasiadas preguntas seguidas. Espera un minuto." if kind == "chat" else "Demasiadas peticiones. Espera un momento."
+            r = _err(429, msg, "RATE_LIMIT")
+            r.headers["Retry-After"] = str(int(60 - (now - win[0])) + 1)
+            return r
+        return await call_next(request)
 
 
 for r in (meta, kpis, sales, alerts, episodes, series, restaurants, export, chat):

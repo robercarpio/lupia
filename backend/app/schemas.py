@@ -77,7 +77,7 @@ class ErrorResponse(BaseModel):
 class AiStatus(BaseModel):
     configured: bool
     model: str | None
-    provider: str = "azure_openai"
+    provider: str = "none"  # "azure_openai" | "databricks" | "none"
 
 
 class HealthResponse(BaseModel):
@@ -171,7 +171,7 @@ class FilterOptions(Loose):
 
 class CopilotChatResponse(BaseModel):
     answer: str
-    source: Literal["azure_openai", "fallback"]
+    source: Literal["azure_openai", "databricks", "fallback"]
     model: str | None = None
     context: dict[str, Any] = Field(default_factory=dict, description="Qué datos se usaron para responder")
     warnings: list[str] = Field(default_factory=list)

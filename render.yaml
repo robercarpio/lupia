@@ -1,0 +1,31 @@
+# Render Blueprint: New → Blueprint → elige este repo.
+# Al crearlo, Render pide DATABRICKS_TOKEN (sync: false = no se guarda en el repo).
+services:
+  - type: web
+    name: lupia
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free            # para el evento: "starter" (no se duerme tras 15 min sin visitas)
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABRICKS_HOST
+        value: https://adb-7405605482140954.14.azuredatabricks.net
+      - key: DATABRICKS_TOKEN
+        sync: false
+      - key: DATABRICKS_WAREHOUSE_ID
+        value: cd42b3c4c8b2d6d6
+      - key: DATABRICKS_LLM_ENDPOINT
+        value: databricks-claude-sonnet-4-5
+      - key: RBE_SCHEMA
+        value: dat_hack_rb06.rbe
+      - key: RBE_PCT_UNITS
+        value: percent
+      - key: CACHE_TTL_SECONDS
+        value: "900"
+      - key: ANOMALY_REFRESH_SECONDS
+        value: "60"
+      - key: SQL_STATEMENT_TIMEOUT_SECONDS
+        value: "120"
+      - key: RATE_LIMIT
+        value: "1"

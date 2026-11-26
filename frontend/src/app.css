@@ -179,6 +179,14 @@
 .btn-ghost:hover:not(:disabled) { background: var(--row-hover); color: var(--ink); }
 .btn-ghost:disabled { opacity: .5; cursor: default; }
 .btn-apply.as-link { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; white-space: nowrap; }
+/* Acciones de panel: bajan de línea antes que salirse de la tarjeta. */
+.panel-actions { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+@media (max-width: 760px) {
+  .panel-actions { gap: 8px; }
+  .panel-head:has(.as-link) .panel-actions { width: 100%; }
+  .panel-actions > .btn-ghost, .panel-actions > .as-link { flex: 1 1 auto; justify-content: center; min-width: 0; }
+  .panel-actions > .as-link { white-space: normal; text-align: center; }
+}
 .btn-link { border: none; background: none; color: var(--ink-2); font-size: 12px; font-weight: 600; cursor: pointer; padding: 8px 0 0; display: inline-flex; gap: 5px; align-items: center; }
 .btn-link:hover { color: var(--teal); }
 .btn-chip {
@@ -343,11 +351,14 @@
   stroke: var(--surface); stroke-width: 1.2; stroke-linejoin: round;
   transition: fill .15s, filter .15s;
 }
-.prov.none { cursor: default; }
+.prov.none:not(.can) { cursor: default; }
 .prov.none path, .prov.none circle { fill: var(--fill); }
 .prov:not(.none).hov path, .prov:not(.none).hov circle, .prov:focus-visible path { filter: brightness(1.18); stroke: var(--ink); stroke-width: 1.5; }
 .prov.none.hov path { stroke: var(--muted); }
 .prov.sel path, .prov.sel circle { stroke: var(--ink); stroke-width: 2.5; }
+.prov-outline { pointer-events: none; }
+.prov-outline path, .prov-outline circle { fill: none; stroke: var(--ink); stroke-width: 2.5; }
+.geo-map svg { touch-action: manipulation; -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; }
 .tile-info { position: absolute; right: 0; bottom: 0; width: 42%; display: flex; flex-direction: column; gap: 2px; font-size: 12px; justify-content: flex-end; pointer-events: none; }
 .tile-info b { font-size: 14px; }
 .geo-scale { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
@@ -685,6 +696,10 @@
   .m-title p { margin: 1px 0 0; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .m-header .icon-btn { width: 36px; height: 36px; flex-shrink: 0; }
   .m-header-extra { display: flex; gap: 8px; margin-top: 10px; }
+  .m-title-brand { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+  .m-brand.full { gap: 8px; }
+  .m-brand.full .brand-logo-icon { width: 28px; }
+  .m-brand.full .brand-logo-text { height: 15px; display: block; }
   .m-header-extra > * { flex: 1; justify-content: center; height: 36px; }
 
   /* Barra de pestañas */
@@ -855,6 +870,38 @@
   .call-vol { order: 5; width: 100%; justify-content: center; }
   .call-vol input { width: 60%; }
 }
+
+/* Llamada en móvil con tablas: todo a la vista a la vez, sin scroll de página.
+   Arriba: estado + lo que estás diciendo (siempre visible). En medio: transcripción
+   (últimos turnos). Abajo: la tabla más reciente, compacta y con su propio scroll. */
+@media (max-width: 760px) {
+  .call-layer.has-blocks .call-main { overflow: hidden; gap: 8px; }
+  .call-layer.has-blocks .call-center {
+    flex: none; padding-top: 0; display: grid; grid-template-columns: 52px 1fr; column-gap: 12px;
+    align-items: center; text-align: left;
+  }
+  .call-layer.has-blocks .orb-canvas { width: 52px !important; height: 52px !important; grid-row: 1 / span 2; }
+  .call-layer.has-blocks .call-phase { margin: 0; font-size: 16px; }
+  .call-layer.has-blocks .rec-pill { margin: 0; justify-self: start; font-size: 11px; padding: 2px 9px; }
+  .call-layer.has-blocks .call-caption, .call-layer.has-blocks .call-hint {
+    grid-column: 1 / -1; min-height: 0; margin-top: 6px; font-size: 15px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .call-layer.has-blocks .call-hint { font-size: 13px; }
+  .call-layer.has-blocks .call-notice { grid-column: 1 / -1; margin-top: 6px; padding: 6px 10px; font-size: 12px; }
+  .call-layer.has-blocks .call-side { flex: 1; min-height: 0; gap: 8px; padding-bottom: 4px; }
+  .call-layer.has-blocks .call-log { flex: 0 0 auto; min-height: 90px; max-height: 24vh; padding: 10px 12px; gap: 8px; border-radius: 14px; }
+  .call-layer.has-blocks .call-log p { font-size: 13px; }
+  .call-layer.has-blocks .call-blocks { flex: 1; min-height: 80px; max-height: none; overflow-y: auto; -webkit-overflow-scrolling: touch; border-radius: 14px; }
+  .call-layer.has-blocks .call-blocks > :not(:first-child) { display: none; } /* solo la última */
+  .call-layer.has-blocks .call-blocks .ai-block { zoom: .82; }
+  .call-layer.has-blocks .call-controls { gap: 14px; padding-top: 8px; }
+  .call-layer.has-blocks .call-btn svg { padding: 12px; }
+  .call-layer.has-blocks .call-btn.end svg { padding: 14px; }
+  .call-layer.has-blocks .call-btn span { font-size: 11px; }
+  .call-layer.has-blocks .call-vol { display: none; } /* en móvil se usan los botones de volumen */
+}
+.call-blocks > * { flex-shrink: 0; min-width: 0; }
 
 /* Llamada: transcripción en directo y diagnóstico */
 .call-top-right { display: flex; align-items: center; gap: 14px; }

@@ -77,6 +77,10 @@ class Settings:
     azure_api_key: str = field(default_factory=lambda: os.getenv("AZURE_OPENAI_API_KEY", "").strip())
     azure_deployment: str = field(default_factory=lambda: os.getenv("AZURE_OPENAI_DEPLOYMENT", "").strip())
     azure_api_version: str = field(default_factory=lambda: os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21").strip())
+    # Alternativa sin claves: un modelo servido en Databricks (Foundation Model APIs / Model Serving),
+    # p. ej. databricks-claude-sonnet-4-5. Se autentica igual que el warehouse (Service Principal de la
+    # app o perfil del CLI). Si Azure OpenAI también está configurado, tiene prioridad Azure.
+    llm_endpoint: str = field(default_factory=lambda: os.getenv("DATABRICKS_LLM_ENDPOINT", "").strip())
 
     def __post_init__(self) -> None:
         if not _SCHEMA_RE.match(self.rbe_schema):
@@ -95,6 +99,23 @@ class Settings:
     @property
     def azure_configured(self) -> bool:
         return bool(self.azure_endpoint and self.azure_api_key and self.azure_deployment)
+
+    @property
+    def ai_provider(self) -> str | None:
+        """Proveedor del copiloto: "azure_openai", "databricks" o None (modo básico)."""
+        if self.azure_configured:
+            return "azure_openai"
+        if self.llm_endpoint:
+            return "databricks"
+        return None
+
+    @property
+    def ai_configured(self) -> bool:
+        return self.ai_provider is not None
+
+    @property
+    def ai_model(self) -> str | None:
+        return {"azure_openai": self.azure_deployment, "databricks": self.llm_endpoint}.get(self.ai_provider or "")
 
     def table(self, name: str) -> str:
         if not re.match(r"^[a-z_]+$", name):

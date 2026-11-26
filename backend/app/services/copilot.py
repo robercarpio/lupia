@@ -1,4 +1,4 @@
-"""Copiloto de IA (Azure OpenAI) sobre las anomalías de la capa Gold.
+"""Copiloto de IA (Azure OpenAI o un modelo servido en Databricks) sobre las anomalías de la capa Gold.
 
 Dos entradas:
 - chat_turn(): POST /api/chat, streaming SSE con el protocolo del frontend
@@ -9,7 +9,7 @@ Dos entradas:
   un restaurante y su evidencia_json.
 
 Regla dura: el modelo no puede atribuir causas externas que no estén en la evidencia.
-Si Azure OpenAI no está configurado o falla, se responde con un resumen determinista.
+Si no hay modelo configurado o falla, se responde con un resumen determinista.
 """
 from __future__ import annotations
 
@@ -384,24 +384,33 @@ VOICE_RULES = ("Modo voz: tu respuesta se leerá en voz alta. Responde en 1 a 3 
                "ni tablas, con cifras redondeadas. Si hay una tabla o gráfico útil, usa mostrar=true y di que lo muestras en pantalla.")
 
 
-# ── Cliente Azure OpenAI ──────────────────────────────────────────────
+# ── Cliente del modelo (Azure OpenAI o Databricks Model Serving) ───────
 _client = None
 
 
 def ai_status() -> dict:
     s = get_settings()
-    return {"configured": s.azure_configured, "model": s.azure_deployment or None, "provider": "azure_openai"}
+    return {"configured": s.ai_configured, "model": s.ai_model, "provider": s.ai_provider or "none"}
 
 
-def _azure():
+def _llm():
+    """Cliente OpenAI-compatible del proveedor activo."""
     global _client
-    if _client is None:
-        from openai import AzureOpenAI
+    s = get_settings()
+    if s.ai_provider == "azure_openai":
+        if _client is None:
+            from openai import AzureOpenAI
 
-        s = get_settings()
-        _client = AzureOpenAI(azure_endpoint=s.azure_endpoint, api_key=s.azure_api_key, api_version=s.azure_api_version,
-                              timeout=60, max_retries=2)
-    return _client
+            _client = AzureOpenAI(azure_endpoint=s.azure_endpoint, api_key=s.azure_api_key, api_version=s.azure_api_version,
+                                  timeout=60, max_retries=2)
+        return _client
+    # Databricks: el token OAuth caduca, así que se crea el cliente (ligero) con el token vigente en cada turno.
+    from openai import OpenAI
+
+    from ..database import llm_credentials
+
+    base_url, token = llm_credentials()
+    return OpenAI(base_url=base_url, api_key=token, timeout=90, max_retries=2)
 
 
 # ── Sesiones ──────────────────────────────────────────────────────────
@@ -504,7 +513,7 @@ def chat_turn(body: dict) -> Iterator[str]:
     }
     user_content = f"<contexto_app>{_jsonable(ctx)}</contexto_app>\n" + (f"{VOICE_RULES}\n" if voice else "") + message
 
-    if not get_settings().azure_configured:
+    if not get_settings().ai_configured:
         _fallback_turn(ds, session, dash, message, emit, note=True)
         emit("done", {})
         yield from flush()
@@ -513,8 +522,8 @@ def chat_turn(body: dict) -> Iterator[str]:
     start = len(session["messages"])
     session["messages"].append({"role": "user", "content": user_content})
     try:
-        client = _azure()
-        deployment = get_settings().azure_deployment
+        client = _llm()
+        deployment = get_settings().ai_model
         for _ in range(8):
             stream = client.chat.completions.create(
                 model=deployment,
@@ -575,7 +584,7 @@ def chat_turn(body: dict) -> Iterator[str]:
         del session["messages"][start:]
         raise
     except Exception as e:  # noqa: BLE001
-        log.exception("Azure OpenAI falló")
+        log.exception("El modelo de IA (%s) falló", get_settings().ai_provider)
         del session["messages"][start:]
         emit("error", {"message": _error_message(e), "code": getattr(e, "status_code", None)})
         _fallback_turn(ds, session, dash, message, emit, note=False)
@@ -585,14 +594,17 @@ def chat_turn(body: dict) -> Iterator[str]:
 
 def _error_message(e: Exception) -> str:
     name = type(e).__name__
-    if name == "AuthenticationError":
-        return "Credenciales de Azure OpenAI no válidas. Revisa AZURE_OPENAI_API_KEY y AZURE_OPENAI_ENDPOINT."
+    dbx = get_settings().ai_provider == "databricks"
+    if name in ("AuthenticationError", "PermissionDeniedError"):
+        return ("Sin permiso para usar el endpoint de Databricks (DATABRICKS_LLM_ENDPOINT): la app necesita «Can query»."
+                if dbx else "Credenciales de Azure OpenAI no válidas. Revisa AZURE_OPENAI_API_KEY y AZURE_OPENAI_ENDPOINT.")
     if name == "NotFoundError":
-        return "No existe el despliegue de Azure OpenAI indicado en AZURE_OPENAI_DEPLOYMENT."
+        return ("No existe el endpoint de Databricks indicado en DATABRICKS_LLM_ENDPOINT."
+                if dbx else "No existe el despliegue de Azure OpenAI indicado en AZURE_OPENAI_DEPLOYMENT.")
     if name == "RateLimitError":
-        return "Se ha alcanzado el límite de peticiones de Azure OpenAI. Inténtalo en unos segundos."
+        return "Se ha alcanzado el límite de peticiones del modelo. Inténtalo en unos segundos."
     if name in ("APIConnectionError", "APITimeoutError"):
-        return "No se puede conectar con Azure OpenAI."
+        return "No se puede conectar con el modelo de IA."
     return f"Error del servicio de IA: {str(e)[:300]}"
 
 
@@ -700,7 +712,7 @@ def _anomaly_text(d: dict) -> str:
 def _fallback_turn(ds: Dataset, session: dict, dash: dict, message: str, emit: Emit, note: bool) -> None:
     emit("status", {"text": "Consultando datos"})
     if note:
-        emit("text", {"delta": "_Asistente en modo básico (Azure OpenAI no está configurado): respuesta generada directamente de los datos._\n\n"})
+        emit("text", {"delta": "_Asistente en modo básico (no hay modelo de IA configurado): respuesta generada directamente de los datos._\n\n"})
     # Lo que la pregunta pide explícitamente (p. ej. «anomalías de Madrid») manda sobre los filtros del dashboard.
     asked = _filters_in_text(ds, message)
     if asked:
@@ -862,22 +874,22 @@ def copilot_answer(req: dict) -> dict:
     ds = get_dataset()
     ctx, warnings = _context_for(ds, req)
     s = get_settings()
-    if not s.azure_configured:
+    if not s.ai_configured:
         return {"answer": _fallback_answer(ctx), "source": "fallback", "model": None, "context": ctx,
-                "warnings": warnings + ["Azure OpenAI no está configurado: respuesta determinista generada a partir de los datos."]}
+                "warnings": warnings + ["No hay modelo de IA configurado: respuesta determinista generada a partir de los datos."]}
     session = _session(req.get("conversation_id"))
     prompt = (f"{system_prompt(ds)}\n\nResponde SOLO con la EVIDENCIA que se adjunta en el mensaje del usuario. Si la pregunta no "
               "puede responderse con ella, dilo y sugiere qué consultar.")
     user = f"EVIDENCIA (datos cerrados de la base de datos):\n{_jsonable(ctx)}\n\nPREGUNTA: {req['question']}"
     hist = [m for m in session["messages"] if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)][-6:]
     try:
-        r = _azure().chat.completions.create(model=s.azure_deployment,
-                                             messages=[{"role": "system", "content": prompt}, *hist, {"role": "user", "content": user}])
+        r = _llm().chat.completions.create(model=s.ai_model,
+                                           messages=[{"role": "system", "content": prompt}, *hist, {"role": "user", "content": user}])
         answer = (r.choices[0].message.content or "").strip() or _fallback_answer(ctx)
         session["messages"] += [{"role": "user", "content": req["question"]}, {"role": "assistant", "content": answer}]
-        return {"answer": answer, "source": "azure_openai", "model": s.azure_deployment, "context": ctx, "warnings": warnings}
+        return {"answer": answer, "source": s.ai_provider, "model": s.ai_model, "context": ctx, "warnings": warnings}
     except Exception as e:  # noqa: BLE001
-        log.exception("Azure OpenAI falló en /api/copilot/chat")
+        log.exception("El modelo de IA falló en /api/copilot/chat")
         return {"answer": _fallback_answer(ctx), "source": "fallback", "model": None, "context": ctx,
                 "warnings": warnings + [_error_message(e)]}
 

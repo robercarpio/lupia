@@ -71,7 +71,7 @@ export default function Dashboard({ meta, filters, onFilter, onClear, onOpen, sy
           <div id="sec-restaurantes" className="anchor span-12" />
           <RestaurantRanking filters={filters} onFilter={onFilter} anomalies={anomalies} className="span-7" mobile={mobile} />
           <div id="sec-geografia" className="span-5 anchor-inline">
-            <GeoPanel geo={data.geo} salesGeo={data.sales.geo} anomalies={anomalies} filters={filters} onFilter={onFilter} />
+            <GeoPanel geo={data.geo} salesGeo={data.sales.geo} anomalies={anomalies} filters={filters} onFilter={onFilter} provinces={meta?.provinces} />
           </div>
           <div id="sec-anomalias" className="anchor span-12" />
           <AnomalyTable filters={filters} meta={meta} onFilter={onFilter} onOpen={onOpen} className="span-12" mobile={mobile} />

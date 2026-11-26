@@ -1,6 +1,7 @@
 # Databricks Apps · backend RBE anomalías de ventas
 # Recursos que hay que declarar en la app (Compute → Apps → la app → Edit → App resources):
 #   sql-warehouse            → SQL Warehouse, permiso "Can use"
+#   serving-endpoint         → Serving endpoint (p. ej. databricks-claude-sonnet-4-5), permiso "Can query"
 #   azure-openai-endpoint    → Secret (scope/clave con la URL https://<recurso>.openai.azure.com)
 #   azure-openai-key         → Secret (API key de Azure OpenAI)
 #   azure-openai-deployment  → Secret (nombre del despliegue del modelo)
@@ -11,7 +12,10 @@ env:
     valueFrom: sql-warehouse
   - name: RBE_SCHEMA
     value: "dat_hack_rb06.rbe"
-  # Copiloto con Azure OpenAI: descomentar cuando existan los secretos y estén declarados como recursos
+  # Copiloto: modelo servido en Databricks (sin claves; usa el Service Principal de la app).
+  - name: DATABRICKS_LLM_ENDPOINT
+    valueFrom: serving-endpoint
+  # Alternativa con Azure OpenAI (si se configura, tiene prioridad): descomentar cuando existan los secretos y estén declarados como recursos
   # de la app (si se declaran aquí sin existir, el despliegue falla). Sin ellos, chat y voz van en modo básico.
   # - name: AZURE_OPENAI_ENDPOINT
   #   valueFrom: azure-openai-endpoint

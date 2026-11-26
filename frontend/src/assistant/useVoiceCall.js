@@ -20,6 +20,15 @@ export const voiceSupport = () => ({
   mic: typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia,
 })
 
+// Móvil (Android/iOS): el reconocedor no puede compartir el micrófono con getUserMedia ni
+// acepta una pista como argumento, el modo continuo de Android duplica/no cierra frases y
+// la voz del asistente sale por el altavoz sin cancelación de eco. Ahí la llamada es
+// semidúplex: se libera el micrófono tras pedir permiso, se reconoce frase a frase
+// (continuous=false, reinicio en onend) y se pausa la escucha mientras habla el asistente.
+const MOBILE = typeof navigator !== 'undefined' && (
+  /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
+
 const LANG = 'es-ES'
 const SILENCE_MS = 800 // pausa tras la que se da la frase por terminada (Chrome tarda mucho más en cerrarla)
 const clean = (t) => t.replace(/[*_`#>|]/g, '').replace(/\s+/g, ' ').trim()
@@ -63,7 +72,11 @@ export function useVoiceCall({ send, abort }) {
     if (r.voice) u.voice = r.voice
     u.volume = r.volume ?? 1
     u.rate = 1.04
-    u.onstart = () => { r.speaking = t; if (r.active) setP('speaking') }
+    u.onstart = () => {
+      r.speaking = t
+      if (r.active) setP('speaking')
+      if (MOBILE) r.pauseRec() // semidúplex: no escuchar nuestra propia voz por el altavoz
+    }
     u.onboundary = () => { r.pulse = performance.now() }
     u.onend = u.onerror = () => {
       r.pending = Math.max(0, (r.pending || 1) - 1)
@@ -76,8 +89,9 @@ export function useVoiceCall({ send, abort }) {
           setP('listening')
           // Sin reiniciar el reconocedor (perderíamos tus primeras palabras): lo que ya haya
           // transcrito del resultado en curso es eco y se recorta de lo que llegue después.
-          if (natural && r.curIdx != null) { r.echo = { idx: r.curIdx, text: r.curText || '' }; r.partial = ''; setInterim('') }
+          if (!MOBILE && natural && r.curIdx != null) { r.echo = { idx: r.curIdx, text: r.curText || '' }; r.partial = ''; setInterim('') }
         }
+        if (MOBILE && r.active && !r.muted && !r.rec) r.startRec()
       }
     }
     r.pending = (r.pending || 0) + 1
@@ -152,6 +166,14 @@ export function useVoiceCall({ send, abort }) {
     r.stream = await navigator.mediaDevices.getUserMedia({
       audio: { deviceId: id ? { exact: id } : undefined, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     })
+    if (MOBILE) {
+      // Solo para obtener el permiso: si la pista sigue abierta el reconocedor no recibe audio.
+      r.micLabel = r.stream.getAudioTracks()[0]?.label || 'micrófono'
+      r.stream.getTracks().forEach((t) => t.stop())
+      r.stream = null; r.track = null
+      dbg('micrófono (móvil, liberado para el reconocedor):', r.micLabel)
+      return
+    }
     r.track = r.stream.getAudioTracks()[0]
     r.track.enabled = !r.muted
     r.micLabel = r.track.label || 'micrófono'
@@ -178,7 +200,7 @@ export function useVoiceCall({ send, abort }) {
     const rec = new SR()
     r.rec = rec
     rec.lang = LANG
-    rec.continuous = true
+    rec.continuous = !MOBILE
     rec.interimResults = true
     rec.maxAlternatives = 1
     if (r.local) rec.processLocally = true
@@ -186,8 +208,8 @@ export function useVoiceCall({ send, abort }) {
 
     r.curIdx = null; r.curText = ''; r.echo = null
     rec.onstart = () => { if (r.rec === rec) setRecStatus('ready'); dbg('reconocimiento iniciado', r.local ? '(local)' : '(nube)', r.useTrack ? '· pista compartida' : '· micrófono del sistema') }
-    rec.onspeechstart = () => { if (r.rec === rec) setRecStatus('speech') }
-    rec.onspeechend = () => { if (r.rec === rec) setRecStatus('ready') }
+    rec.onspeechstart = () => { if (r.rec === rec) { setRecStatus('speech'); if (MOBILE) setHearing(true) } }
+    rec.onspeechend = () => { if (r.rec === rec) { setRecStatus('ready'); if (MOBILE) setHearing(false) } }
     rec.onresult = (e) => {
       if (r.rec !== rec) return
       r.failures = 0
@@ -240,6 +262,7 @@ export function useVoiceCall({ send, abort }) {
         case 'aborted': break
         case 'no-speech':
           r.noSpeech = (r.noSpeech || 0) + 1
+          if (MOBILE) { if (r.noSpeech >= 4) setNotice('No te oigo. Habla cerca del micrófono del móvil.'); break }
           if (r.noSpeech >= 2) setNotice((r.peak || 0) < 0.03
             ? `No llega sonido desde «${r.micLabel}». Elige otro micrófono arriba o revisa el volumen de entrada del sistema.`
             : 'Se detecta sonido pero no voz reconocible. Habla un poco más cerca del micrófono.')
@@ -271,7 +294,9 @@ export function useVoiceCall({ send, abort }) {
     rec.onend = () => {
       if (r.rec !== rec) return
       setRecStatus('idle')
+      if (MOBILE) setHearing(false)
       if (!r.active || r.muted || r.waitLocal) return
+      if (MOBILE && r.speaking) { r.rec = null; return } // se reanuda al terminar de hablar
       const delay = Math.min(4000, 200 * 2 ** Math.min(4, r.failures || 0))
       setTimeout(() => { if (r.rec === rec && r.active && !r.muted) r.startRec() }, delay)
     }
@@ -285,6 +310,17 @@ export function useVoiceCall({ send, abort }) {
     }
   }, [r, stopSpeaking, abort]) // eslint-disable-line react-hooks/exhaustive-deps
   r.startRec = startRecognition
+
+  /** Detiene la escucha sin dar la llamada por silenciada (móvil, mientras habla el asistente). */
+  const pauseRecognition = useCallback(() => {
+    const rec = r.rec
+    if (!rec) return
+    r.rec = null
+    clearTimeout(r.commitTimer)
+    try { rec.abort() } catch { /* noop */ }
+    r.partial = ''; setInterim(''); setRecStatus('idle'); setHearing(false)
+  }, [r])
+  r.pauseRec = pauseRecognition
 
   /** Alternativa sin servicio en la nube: reconocimiento local del navegador (Chrome reciente). */
   const tryLocal = useCallback(async (why) => {
@@ -328,14 +364,19 @@ export function useVoiceCall({ send, abort }) {
   // ── Ciclo de la llamada ─────────────────────────────────────────────
   const start = useCallback(async () => {
     const sup = voiceSupport()
+    // iOS/Android solo dejan hablar a speechSynthesis si la primera locución nace del gesto
+    // del usuario; tras los await siguientes ese gesto ya se ha perdido.
+    if (sup.synthesis) {
+      try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u) } catch { /* noop */ }
+    }
     setError(null); setNotice(null); setTranscript([]); setBlocks([]); setInterim(''); setLocalStatus(null)
     if (!sup.recognition || !sup.synthesis || !sup.mic) {
-      setError('Este navegador no soporta la conversación por voz (Web Speech API). Usa Chrome, Edge o Safari en escritorio.')
+      setError('Este navegador no soporta la conversación por voz (Web Speech API). Usa Chrome (Android), Safari (iOS), o Chrome/Edge en escritorio.')
       setP('error')
       return
     }
     setP('connecting')
-    Object.assign(r, { useTrack: true, local: false, waitLocal: false, failures: 0, noSpeech: 0, muted: false, partial: '', lastManual: null })
+    Object.assign(r, { useTrack: !MOBILE, local: false, waitLocal: false, failures: 0, noSpeech: 0, muted: false, partial: '', lastManual: null })
     try {
       await openMic(r.preferredDevice)
     } catch (e) {
@@ -353,7 +394,7 @@ export function useVoiceCall({ send, abort }) {
       setConnection(h.ai?.configured ? 'online' : 'no-ai')
     } catch { setConnection('offline') }
     // El reconocimiento en el dispositivo devuelve texto parcial bastante antes que el de la nube.
-    if (SR.available) {
+    if (SR.available && !MOBILE) {
       try {
         const st = await SR.available({ langs: [LANG], processLocally: true })
         dbg('reconocimiento local:', st)
@@ -410,7 +451,7 @@ export function useVoiceCall({ send, abort }) {
     r.preferredDevice = id
     try {
       await openMic(id)
-      r.useTrack = true
+      r.useTrack = !MOBILE
       r.noSpeech = 0
       setNotice(null)
       if (r.active) startRecognition()
@@ -431,7 +472,7 @@ export function useVoiceCall({ send, abort }) {
 
   /** Nivel actual del micrófono (0-1) para la visualización; no provoca renders. */
   const getLevel = useCallback(() => {
-    if (!r.analyser) return 0
+    if (!r.analyser) return MOBILE && r.rec && !r.muted ? (r.partial ? 0.35 + Math.random() * 0.3 : 0.05) : 0
     const a = new Uint8Array(r.analyser.frequencyBinCount)
     r.analyser.getByteTimeDomainData(a)
     let s = 0

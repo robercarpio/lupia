@@ -6,11 +6,21 @@ export function MobileHeader({ title, subtitle, theme, onTheme, alerts = 0, unse
   return (
     <header className="m-header">
       <div className="m-header-row">
-        <Brand compact className="m-brand" onClick={onHome} />
-        <div className="m-title">
-          <h1>{title}</h1>
-          {subtitle && <p>{subtitle}</p>}
-        </div>
+        {title ? (
+          <>
+            <Brand compact className="m-brand" onClick={onHome} />
+            <div className="m-title">
+              <h1>{title}</h1>
+              {subtitle && <p>{subtitle}</p>}
+            </div>
+          </>
+        ) : (
+          // Sin título: logotipo completo de Lupia, como en el sidebar de escritorio.
+          <div className="m-title m-title-brand">
+            <Brand className="m-brand full" onClick={onHome} />
+            {subtitle && <p>{subtitle}</p>}
+          </div>
+        )}
         <ThemeButton theme={theme} onTheme={onTheme} />
         <button className="icon-btn" onClick={(e) => { onAlerts?.(e); onSeen?.() }} aria-label={`Alertas de prioridad alta: ${alerts}${unseen ? ' (nuevas)' : ''}`}>
           <Bell size={18} />{unseen && <i className="badge" />}

@@ -88,6 +88,10 @@ export default function CallOverlay({ call, onClose, onOpen, onDashboard, meta }
   const [title, hint] = PHASE[call.phase] || ['', '']
   const logRef = useRef(null)
   useEffect(() => { logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' }) }, [call.transcript, call.interim])
+  // Al llegar una tabla nueva, mostrarla desde arriba (tiene su propio scroll).
+  const blocksRef = useRef(null)
+  const firstBlock = call.blocks[0]?.key
+  useEffect(() => { if (firstBlock) blocksRef.current?.scrollTo({ top: 0, behavior: 'smooth' }) }, [firstBlock])
   const conn = {
     checking: ['Comprobando conexión', 'warn'], online: ['Conectado', 'ok'], offline: ['Sin conexión con el servicio de voz', 'bad'],
     'no-ai': ['Modo básico: backend sin Azure OpenAI configurado', 'warn'],
@@ -103,7 +107,7 @@ export default function CallOverlay({ call, onClose, onOpen, onDashboard, meta }
   }, [canSend, call])
 
   return (
-    <div className="call-layer" role="dialog" aria-modal="true" aria-label="Llamada con el AI Copilot">
+    <div className={`call-layer ${call.blocks.length ? 'has-blocks' : ''}`} role="dialog" aria-modal="true" aria-label="Llamada con el AI Copilot">
       <header className="call-top">
         <span className={`conn ${conn[1]}`}>{conn[1] === 'bad' ? <WifiOff size={14} /> : <Wifi size={14} />}{conn[0]}</span>
         <span className="call-name">AI Copilot · Anomalías de ventas</span>
@@ -152,7 +156,7 @@ export default function CallOverlay({ call, onClose, onOpen, onDashboard, meta }
               {call.interim && <p className="user interim"><small>Tú · transcribiendo</small>{call.interim}</p>}
             </div>
             {call.blocks.length > 0 && (
-              <div className="call-blocks">
+              <div className="call-blocks" ref={blocksRef}>
                 {call.blocks.slice(0, 2).map((b) => <Block key={b.key} block={b} onOpen={onOpen} onDashboard={onDashboard} meta={meta} />)}
               </div>
             )}

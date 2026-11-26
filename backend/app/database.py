@@ -172,6 +172,21 @@ class _Pool:
 
 
 _pool = _Pool()
+
+
+def llm_credentials() -> tuple[str, str]:
+    """(URL base OpenAI-compatible de Model Serving, token vigente) con la misma autenticación que el warehouse.
+
+    El token se pide en cada llamada: el SDK lo cachea y lo renueva antes de que caduque (OAuth M2M).
+    """
+    cfg = _pool._config()
+    host = (cfg.host or "").rstrip("/")
+    if not host:
+        raise NotConfigured("Falta DATABRICKS_HOST (o un perfil en ~/.databrickscfg).")
+    auth = cfg.authenticate().get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise NotConfigured("No se ha podido obtener un token de Databricks para el modelo.")
+    return f"{host}/serving-endpoints", auth[len("Bearer "):]
 # Caché de consultas «stale-while-revalidate»: clave → (instante, filas). Dentro del TTL se sirve tal cual;
 # caducada (pero con menos de CACHE_STALE_SECONDS) se sirve al instante y se refresca en segundo plano,
 # así ningún usuario espera a Databricks por una caducidad. Las anomalías nuevas invalidan todo (dataset.py).
