@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS rbe.series_summary (
     navidad                     BOOLEAN NOT NULL DEFAULT FALSE,
     semana_santa                BOOLEAN NOT NULL DEFAULT FALSE,
     is_eligible_for_alert       BOOLEAN NOT NULL DEFAULT TRUE,
-    exclusion_reason            VARCHAR(48),                   -- warmup | festivo | ciclo_vida | reforma | canal_pequeno | dia_neutro
+    exclusion_reason            VARCHAR(48),                   -- sin_historico | fecha_especial | festivo | vispera_festivo | apertura | cierre | reforma | canal_pequeno | dia_neutro
     is_systemic_day             BOOLEAN NOT NULL DEFAULT FALSE,
 
     -- Final anomaly flag

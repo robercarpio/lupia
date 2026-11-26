@@ -496,3 +496,7 @@ $RECYCLE.BIN/
 
 # Windows shortcuts
 *.lnk
+
+.databricks
+/.agents/
+/.vscode/
