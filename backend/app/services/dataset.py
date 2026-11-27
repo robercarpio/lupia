@@ -125,6 +125,19 @@ def _restaurant(r: dict) -> dict:
     }
 
 
+def active_channels(rest: dict | None, fallback_canal: str | None = None) -> list[str]:
+    """Canales realmente activos del restaurante según restaurants_dim."""
+    chs = {"sala"}
+    if rest:
+        if rest.get("domicilio") == "si":
+            chs.add("domicilio")
+        if rest.get("autoking") == "si":
+            chs.add("autoking")
+    if fallback_canal in ("sala", "domicilio", "autoking"):
+        chs.add(fallback_canal)
+    return [c for c in ("sala", "domicilio", "autoking") if c in chs]
+
+
 def to_anomaly(a: dict, rest: dict | None) -> dict:
     """Fila de alerts_prioritized → objeto «anomalía» del contrato del frontend (+ campos extra)."""
     rid, canal, fecha = a["restaurante_id"], a["canal"], a["fecha"]
@@ -143,6 +156,19 @@ def to_anomaly(a: dict, rest: dict | None) -> dict:
     z = abs(a["z_max"]) if a.get("z_max") is not None else (max(zs) if zs else None)
     evid = a.get("evidencia_json") if isinstance(a.get("evidencia_json"), dict) else {}
     otros = evid.get("otros_canales") if isinstance(evid.get("otros_canales"), list) else None
+    canales_activos = (
+        [c for c in evid["canales_activos_restaurante"] if c in ("sala", "domicilio", "autoking")]
+        if isinstance(evid.get("canales_activos_restaurante"), list) and evid.get("canales_activos_restaurante")
+        else active_channels(rest, canal)
+    )
+    tiene_otros_canales = len(canales_activos) > 1
+    otros_normales = a.get("otros_canales_normales") if tiene_otros_canales else None
+    if not tiene_otros_canales:
+        estado_otros = "sin_otros_canales_activos"
+    elif otros_normales is True:
+        estado_otros = "otros_canales_normales"
+    else:
+        estado_otros = "otros_canales_tambien_desviados"
     prov = (rest or {}).get("provincia") or provincia_label(a.get("provincia"))
     ccaa = (rest or {}).get("ccaa") or ccaa_label(a.get("comunidad_autonoma"))
     out = {
@@ -186,10 +212,16 @@ def to_anomaly(a: dict, rest: dict | None) -> dict:
         "episode_days": a.get("episode_days"),
         "episode_day_index": a.get("episode_day_index"),
         "episode_total_impact_eur": a.get("episode_total_impact_eur"),
+        "incident_id": evid.get("incident_id"),
+        "incident_canales": evid.get("incident_canales"),
+        "incident_multicanal": bool(evid.get("incident_multicanal")) if "incident_multicanal" in evid else None,
         "contribucion_tickets_pct": frac(a.get("contribucion_tickets_pct")),
         "contribucion_tm_pct": frac(a.get("contribucion_tm_pct")),
         "cohorte": frac(a.get("peer_delta_pct")),
-        "otros_canales_normales": a.get("otros_canales_normales"),
+        "canales_activos_restaurante": canales_activos,
+        "tiene_otros_canales": tiene_otros_canales,
+        "otros_canales_normales": otros_normales,
+        "estado_otros_canales": estado_otros,
         "otros_canales": otros,
         "explicacion_negocio": a.get("explicacion_negocio"),
         "recomendacion_revision": a.get("recomendacion_revision"),

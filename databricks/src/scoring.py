@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -40,19 +40,54 @@ ALERTS_INSERT_COLS = [
 ]
 
 
-def _assign_episodes(alerts: pd.DataFrame) -> pd.DataFrame:
-    """Group consecutive alert days of same (restaurante_id, canal, tipo) into UX episodes."""
+def _assign_episodes(
+    alerts: pd.DataFrame,
+    df_features: Optional[pd.DataFrame] = None,
+    max_gap_days: int = 3,
+    max_bridge_days: int = 10,
+) -> pd.DataFrame:
+    """Group nearby alert days of same (restaurante_id, canal, tipo) into consolidated UX episodes.
+
+    Merges consecutive alerts when the calendar gap is <= `max_gap_days` (default 3 days), or up to
+    `max_bridge_days` when every intermediate date is missing (SIN_REGISTRO) or excluded by guardrails
+    (holiday, special date, systemic day, etc.). Keeps 1 row per alert day in `alerts_prioritized`.
+    """
     if alerts.empty:
         return alerts
     a = alerts.sort_values(["restaurante_id", "canal", "tipo", "fecha"]).reset_index(drop=True)
     fecha_dt = pd.to_datetime(a["fecha"])
     prev_dt = fecha_dt.groupby([a["restaurante_id"], a["canal"], a["tipo"]], sort=False).shift(1)
-    same_grp = (
+    gap_days = (fecha_dt - prev_dt).dt.days
+    same_key = (
         (a["restaurante_id"] == a["restaurante_id"].shift(1))
         & (a["canal"] == a["canal"].shift(1))
         & (a["tipo"] == a["tipo"].shift(1))
-        & ((fecha_dt - prev_dt).dt.days == 1)
     )
+    same_grp = (same_key & (gap_days <= max_gap_days)).to_numpy(dtype=bool, copy=True)
+
+    if df_features is not None and "is_eligible_for_alert" in df_features.columns:
+        cand_idx = np.flatnonzero(same_key & (gap_days > max_gap_days) & (gap_days <= max_bridge_days))
+        if len(cand_idx) > 0:
+            elig_df = df_features.loc[
+                df_features["is_eligible_for_alert"].to_numpy(dtype=bool),
+                ["restaurante_id", "canal", "fecha"],
+            ]
+            elig_set = set(
+                zip(
+                    elig_df["restaurante_id"].to_numpy(),
+                    elig_df["canal"].to_numpy(),
+                    pd.to_datetime(elig_df["fecha"]).dt.floor("D"),
+                )
+            )
+            for idx in cand_idx:
+                rid = a.at[idx, "restaurante_id"]
+                ch = a.at[idx, "canal"]
+                d0 = prev_dt.iloc[idx]
+                d1 = fecha_dt.iloc[idx]
+                inter = pd.date_range(d0 + pd.Timedelta(days=1), d1 - pd.Timedelta(days=1), freq="D")
+                if all((rid, ch, d) not in elig_set for d in inter):
+                    same_grp[idx] = True
+
     ep_num = (~same_grp).cumsum()
     a["episode_start_date"] = fecha_dt.groupby(ep_num, sort=False).transform("min").dt.date
     a["episode_end_date"] = fecha_dt.groupby(ep_num, sort=False).transform("max").dt.date
@@ -63,6 +98,32 @@ def _assign_episodes(alerts: pd.DataFrame) -> pd.DataFrame:
     )
     start_str = pd.to_datetime(a["episode_start_date"]).dt.strftime("%Y%m%d")
     a["episode_id"] = a["restaurante_id"] + "_" + a["canal"] + "_" + start_str
+    return a
+
+
+def _assign_incidents(alerts: pd.DataFrame, max_gap_days: int = 1) -> pd.DataFrame:
+    """Link alerts across channels of the same restaurant within a +-1 day window into an incident_id."""
+    if alerts.empty:
+        for col in ("incident_id", "incident_start_date", "incident_end_date", "incident_canales",
+                    "incident_alert_count", "incident_multicanal"):
+            alerts[col] = pd.Series(dtype=object)
+        return alerts
+
+    a = alerts.sort_values(["restaurante_id", "fecha", "canal", "tipo"]).reset_index(drop=True)
+    fecha_dt = pd.to_datetime(a["fecha"])
+    prev_dt = fecha_dt.groupby(a["restaurante_id"], sort=False).shift(1)
+    gap_days = (fecha_dt - prev_dt).dt.days
+    same_inc = (a["restaurante_id"] == a["restaurante_id"].shift(1)) & (gap_days <= max_gap_days)
+    inc_num = (~same_inc).cumsum()
+
+    a["incident_start_date"] = fecha_dt.groupby(inc_num, sort=False).transform("min").dt.date
+    a["incident_end_date"] = fecha_dt.groupby(inc_num, sort=False).transform("max").dt.date
+    a["incident_alert_count"] = a.groupby(inc_num, sort=False)["fecha"].transform("count").astype(np.int16)
+    inc_ch_map = a.groupby(inc_num, sort=False)["canal"].apply(lambda s: sorted(set(s.astype(str)))).to_dict()
+    a["incident_canales"] = inc_num.map(inc_ch_map)
+    a["incident_multicanal"] = a["incident_canales"].apply(lambda cs: len(cs) > 1)
+    inc_start_str = pd.to_datetime(a["incident_start_date"]).dt.strftime("%Y%m%d")
+    a["incident_id"] = "INC_" + a["restaurante_id"] + "_" + inc_start_str
     return a
 
 
@@ -122,18 +183,30 @@ def _build_explanations(a: pd.DataFrame) -> Tuple[list, list, list]:
                 f"{_fmt_es(float(row.ventas_esperadas))} € esperados, {dv_str} %; impacto {_fmt_es(float(row.impacto_estimado_eur), 0, sign=True)} €) "
                 f"y {_fmt_es(int(row.tickets_reales))} {tk_word} ({dt_str} %)."
             )
-        if row.otros_canales_normales:
+        canales_activos = list(getattr(row, "canales_activos_restaurante", ["sala"]) or ["sala"])
+        tiene_otros = len(canales_activos) > 1
+        if not tiene_otros:
+            estado_otros = "sin_otros_canales_activos"
+        elif bool(row.otros_canales_normales):
+            estado_otros = "otros_canales_normales"
+        else:
+            estado_otros = "otros_canales_tambien_desviados"
+
+        if tiene_otros and row.otros_canales_normales:
             msg += " Los demás canales del restaurante operaron dentro de lo normal."
         if abs(row.peer_delta_pct) >= 15.0:
             geo_slug = str(row.comunidad_autonoma or "")
             geo_lbl = CCAA_LABELS.get(geo_slug, geo_slug if geo_slug not in ("", "desconocido") else "su referencia nacional")
             msg += f" Frente a locales comparables de {geo_lbl} se desvía {_fmt_es(float(row.peer_delta_pct), 1, sign=True)} %."
         if row.episode_days > 1:
-            msg += f" Episodio activo de {row.episode_days} días (día {row.episode_day_index}/{row.episode_days})."
+            msg += (
+                f" Episodio consolidado de {row.episode_days} días con alerta "
+                f"(del {row.episode_start_date} al {row.episode_end_date}; alerta {row.episode_day_index}/{row.episode_days})."
+            )
 
-        if row.tipo == "caida" and row.canal == "domicilio" and row.otros_canales_normales:
+        if row.tipo == "caida" and row.canal == "domicilio" and tiene_otros and row.otros_canales_normales:
             rec = "Confirmar con operaciones si el canal domicilio estuvo activo durante toda la jornada y sin cierres parciales de plataformas o incidencias de registro."
-        elif row.tipo == "caida" and row.canal == "autoking" and row.otros_canales_normales:
+        elif row.tipo == "caida" and row.canal == "autoking" and tiene_otros and row.otros_canales_normales:
             rec = "Confirmar con operaciones si el carril AutoKing operó todo el horario previsto y si las ventas se registraron completas."
         elif row.tipo == "caida":
             rec = "Confirmar con operaciones si el local operó en su horario habitual y verificar el registro completo de ventas en el canal."
@@ -142,6 +215,7 @@ def _build_explanations(a: pd.DataFrame) -> Tuple[list, list, list]:
         else:
             rec = "Verificar que las ventas no estén duplicadas y confirmar si existió algún evento o acción comercial puntual antes de ajustar la previsión."
 
+        inc_canales = list(getattr(row, "incident_canales", [row.canal]) or [row.canal])
         ev = {
             "restaurante_id": row.restaurante_id,
             "canal": row.canal,
@@ -157,8 +231,21 @@ def _build_explanations(a: pd.DataFrame) -> Tuple[list, list, list]:
             "ticket_medio_real": round(float(row.ticket_medio_real), 2),
             "ticket_medio_esperado": round(float(row.ticket_medio_esperado), 2),
             "peer_delta_pct": round(float(row.peer_delta_pct), 2),
-            "otros_canales_normales": bool(row.otros_canales_normales),
+            "diferencia_vs_locales_comparables_pct": round(float(row.peer_delta_pct), 2),
+            "canales_activos_restaurante": canales_activos,
+            "tiene_otros_canales": tiene_otros,
+            "otros_canales_normales": bool(row.otros_canales_normales) if tiene_otros else None,
+            "estado_otros_canales": estado_otros,
+            "episode_id": str(row.episode_id),
+            "episode_start_date": str(row.episode_start_date),
+            "episode_end_date": str(row.episode_end_date),
             "episode_days": int(row.episode_days),
+            "episode_day_index": int(row.episode_day_index),
+            "episode_total_impact_eur": round(float(row.episode_total_impact_eur), 2),
+            "incident_id": str(getattr(row, "incident_id", "")),
+            "incident_canales": inc_canales,
+            "incident_multicanal": bool(getattr(row, "incident_multicanal", False)),
+            "incident_alert_count": int(getattr(row, "incident_alert_count", 1)),
         }
         exps.append(msg)
         recs.append(rec)
@@ -226,7 +313,25 @@ def build_gold_outputs(
     a["contribucion_tickets_pct"] = np.round(np.where(denom > 1e-6, 100.0 * dt / safe_denom, 50.0), 2)
     a["contribucion_tm_pct"] = np.round(np.where(denom > 1e-6, 100.0 * dtm / safe_denom, 50.0), 2)
 
-    a = _assign_episodes(a)
+    a = _assign_episodes(a, df_features=df_features)
+    a = _assign_incidents(a)
+
+    # Attach real active channels per restaurant so single-channel stores never claim sibling-channel failure
+    ch_from_feat = df_features.groupby("restaurante_id", sort=False)["canal"].unique().to_dict()
+    dim_ch_map: Dict[str, list] = {}
+    if restaurants_dim is not None and not restaurants_dim.empty:
+        for rdim in restaurants_dim.itertuples(index=False):
+            chs = {"sala"}
+            if bool(getattr(rdim, "tiene_domicilio", False)):
+                chs.add("domicilio")
+            if bool(getattr(rdim, "tiene_autoking", False)):
+                chs.add("autoking")
+            if rdim.restaurante_id in ch_from_feat:
+                chs.update(str(c) for c in ch_from_feat[rdim.restaurante_id])
+            dim_ch_map[str(rdim.restaurante_id)] = [c for c in ("sala", "domicilio", "autoking") if c in chs]
+    a["canales_activos_restaurante"] = a["restaurante_id"].map(
+        lambda rid: dim_ch_map.get(str(rid), [c for c in ("sala", "domicilio", "autoking") if c in set(ch_from_feat.get(rid, ["sala"]))])
+    )
 
     # Priority score (0..100)
     if not a.empty:

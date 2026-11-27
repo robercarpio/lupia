@@ -1,0 +1,131 @@
+{
+  "version": "1.0",
+  "nota_uso": "Contexto operativo curado para Burger King España (RBE). Los playbooks son guías de revisión a confirmar con operaciones, NUNCA afirmaciones de causa confirmada salvo que figure explícitamente en los eventos macro verificados o en el calendario.",
+  "playbooks_qsr": [
+    {
+      "id": "cierre_temporal_tickets_residuales",
+      "titulo": "Posible cierre temporal con tickets residuales (1-4 tickets)",
+      "patron_datos": "Ventas residuales (<50 € o caída >95 %) con 1 a 4 tickets frente a cientos esperados, especialmente si hay días SIN_REGISTRO adyacentes en la ventana de ±7 días.",
+      "checklist_operativo": [
+        "Confirmar con operaciones si el restaurante estuvo cerrado al público esos días (y si los 1-4 tickets corresponden a pruebas internas, pedidos de personal o cierre parcial).",
+        "Revisar conjuntamente los días con alerta y los días SIN_REGISTRO contiguos como un único episodio operativo.",
+        "Si se confirma cierre temporal planificado o incidencia de apertura, excluir el tramo del entrenamiento de previsión."
+      ]
+    },
+    {
+      "id": "caida_aislada_domicilio_agregadores",
+      "titulo": "Caída aislada en domicilio con sala/AutoKing normales",
+      "patron_datos": "Desviación fuerte negativa solo en el canal domicilio mientras los demás canales activos del mismo restaurante operan dentro de lo normal.",
+      "checklist_operativo": [
+        "Confirmar con operaciones si el servicio de entrega a domicilio estuvo activo toda la jornada en las plataformas integradas.",
+        "Verificar si hubo pausas temporales de cocina/reparto o incidencias de transmisión de pedidos solo en domicilio."
+      ]
+    },
+    {
+      "id": "caida_aislada_autoking",
+      "titulo": "Caída aislada en AutoKing con sala normal",
+      "patron_datos": "Desviación fuerte negativa solo en el canal AutoKing mientras sala (y domicilio si existe) operan con normalidad.",
+      "checklist_operativo": [
+        "Confirmar si el carril AutoKing operó en su horario habitual completo y sin restricciones puntuales de acceso.",
+        "Verificar que los pedidos atendidos por carril no se hayan registrado en el canal sala."
+      ]
+    },
+    {
+      "id": "anomalia_pura_tickets_tpv",
+      "titulo": "Anomalía pura de tickets o distorsión de ticket medio",
+      "patron_datos": "Desviación extrema en el número de tickets con ventas relativamente estables (o fuerte salto del ticket medio real frente al esperado).",
+      "checklist_operativo": [
+        "Revisar si existió división o agrupación atípica de pedidos, redención masiva de cupones o incidencias de registro de tickets en caja.",
+        "Validar la integridad del conteo de tickets antes de usar la jornada en modelos de demanda o dotación de personal."
+      ]
+    },
+    {
+      "id": "subida_evento_local_no_calendario",
+      "titulo": "Subida puntual no recogida en el calendario provincial",
+      "patron_datos": "Subida intensa en un solo restaurante (frecuentemente en sala) mientras los locales comparables de la misma comunidad no muestran el mismo repunte.",
+      "checklist_operativo": [
+        "Verificar primero que no existan ventas duplicadas o ajustes retroactivos cargados en esa fecha.",
+        "Confirmar con gerencia si coincidió con una fiesta municipal no listada en festivos de capital, acción promocional propia o gran afluencia local puntual."
+      ]
+    },
+    {
+      "id": "incidente_multicanal_local",
+      "titulo": "Incidencia simultánea en varios canales del restaurante",
+      "patron_datos": "Alertas en dos o más canales activos del mismo restaurante dentro de una ventana de ±1 día (incidente multicanal).",
+      "checklist_operativo": [
+        "Abordar la incidencia a nivel restaurante completo y no canal por canal.",
+        "Confirmar horario efectivo de apertura y cierre del local y verificar la carga completa de ventas de todos los canales."
+      ]
+    },
+    {
+      "id": "episodio_sostenido_con_huecos",
+      "titulo": "Episodio sostenido interrumpido por días sin registro o festivos",
+      "patron_datos": "Múltiples alertas del mismo restaurante, canal y dirección separadas por 1 a 3 días (o por días SIN_REGISTRO / festivos excluidos).",
+      "checklist_operativo": [
+        "Evaluar el impacto económico acumulado de todo el episodio consolidado y comprobar el día exacto de recuperación a niveles esperados.",
+        "Reportar todas las fechas con alerta y las fechas intermedias SIN_REGISTRO o excluidas para dar trazabilidad completa."
+      ]
+    },
+    {
+      "id": "tienda_monocanal_interpretacion",
+      "titulo": "Restaurante monocanal (solo sala)",
+      "patron_datos": "El maestro del restaurante indica tiene_domicilio=false y tiene_autoking=false (solo opera sala).",
+      "checklist_operativo": [
+        "No inferir nunca fallo ni normalidad en domicilio o AutoKing porque el restaurante no dispone de esos canales.",
+        "Usar la comparativa con locales comparables de la misma comunidad/provincia y la continuidad temporal ±7 días como referencia principal."
+      ]
+    }
+  ],
+  "eventos_macro_espana": [
+    {
+      "id": "incidencia_domicilio_2023_11_11",
+      "fecha_inicio": "2023-11-11",
+      "fecha_fin": "2023-11-11",
+      "ambito": "Nacional (España)",
+      "ccaa_afectadas": ["todas"],
+      "canal_principal": "domicilio",
+      "descripcion": "Incidencia generalizada de registro/carga en el canal domicilio a nivel nacional; el detector lo excluye automáticamente como día neutro sistémico.",
+      "tratamiento_modelo": "Excluido automáticamente como dia_neutro."
+    },
+    {
+      "id": "dana_valencia_2024",
+      "fecha_inicio": "2024-10-29",
+      "fecha_fin": "2024-11-04",
+      "ambito": "Comunidad Valenciana y áreas limítrofes",
+      "ccaa_afectadas": ["Comunidad Valenciana", "Castilla-La Mancha", "Andalucía"],
+      "canal_principal": "todos",
+      "descripcion": "Episodio de DANA con fuerte afectación operativa y cierres preventivos en la provincia de Valencia y zonas próximas; días con caída generalizada de red marcados como sistémicos.",
+      "tratamiento_modelo": "Los días con caída >=35 % de locales en la comunidad se excluyen como dia_neutro; locales con cierres prolongados activan exclusión de reforma/cierre."
+    },
+    {
+      "id": "apagon_peninsular_2025_04_28",
+      "fecha_inicio": "2025-04-28",
+      "fecha_fin": "2025-04-28",
+      "ambito": "España peninsular",
+      "ccaa_afectadas": ["todas"],
+      "canal_principal": "todos",
+      "descripcion": "Apagón eléctrico generalizado en la península ibérica el 28 de abril de 2025 con desplome masivo de actividad y registro.",
+      "tratamiento_modelo": "Excluido explícitamente del baseline limpio y como dia_neutro sistémico."
+    },
+    {
+      "id": "san_juan_cataluna_valencia",
+      "fecha_inicio": "2025-06-24",
+      "fecha_fin": "2025-06-24",
+      "ambito": "Cataluña y Comunidad Valenciana (anual 24 de junio)",
+      "ccaa_afectadas": ["Cataluña", "Comunidad Valenciana"],
+      "canal_principal": "todos",
+      "descripcion": "Festividad autonómica de San Juan (24 de junio); excluido por calendario como festivo regional, pudiendo situarse en medio de episodios pluridiarios (p. ej. 23 y 25 de junio).",
+      "tratamiento_modelo": "Excluido como festivo; los episodios cercanos a ambos lados se consolidan."
+    },
+    {
+      "id": "fechas_especiales_navidad_reyes",
+      "fecha_inicio": "2023-12-24",
+      "fecha_fin": "2026-01-06",
+      "ambito": "Nacional (24/12, 25/12, 31/12, 01/01, 05/01, 06/01 de cada año)",
+      "ccaa_afectadas": ["todas"],
+      "canal_principal": "todos",
+      "descripcion": "Fechas especiales de Navidad, Fin de Año y Reyes con horarios reducidos y cierres programados.",
+      "tratamiento_modelo": "Excluidas automáticamente por guardrail fecha_especial / festivo."
+    }
+  ]
+}

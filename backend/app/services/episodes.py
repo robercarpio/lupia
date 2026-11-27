@@ -73,6 +73,8 @@ def episode_detail(ds: Dataset, episode_id: str) -> dict | None:
             "comparables_con_anomalia": (peer or {}).get("con_anomalia"),
         })
         canales.append({"fecha": a["fecha"], "z_cross_channel": a.get("z_cross_channel"),
+                        "tiene_otros_canales": a.get("tiene_otros_canales"),
+                        "estado_otros_canales": a.get("estado_otros_canales"),
                         "otros_canales_normales": a.get("otros_canales_normales"),
                         "otros_canales": a.get("otros_canales") or _other_channels(repo.series_day(rid, a["fecha"]), canal)})
     return {

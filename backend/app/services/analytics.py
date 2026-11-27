@@ -11,8 +11,9 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
+from . import context_kb
 from . import repository as repo
-from .dataset import Dataset, get_dataset, public_restaurant
+from .dataset import Dataset, active_channels, get_dataset, public_restaurant
 from .geo import resolve
 from .narrative import build_detail, merge_evidence_detail
 
@@ -62,9 +63,21 @@ def _num(v: Any, default: float = 0.0) -> float:
 
 
 def normalize_restaurant_id(raw: Any) -> str:
+    """Normaliza cualquier variante de ID de restaurante: 57, R57, R057, R-57, R 57, R057/R57 → R057."""
     s = str(raw or "").strip().upper()
-    m = re.match(r"^R?(\d{1,3})$", s)
-    return f"R{m.group(1).zfill(3)}" if m else s
+    if not s:
+        return ""
+    m = re.match(r"^R?[\s\-_]?(\d{1,3})$", s)
+    if m:
+        return f"R{m.group(1).zfill(3)}"
+    # Variantes compuestas como "R057/R57", "tienda R57", "RS57", "local 57"
+    m = re.search(r"\bR[A-Z]?[\s\-_]?(\d{1,3})\b", s)
+    if m:
+        return f"R{m.group(1).zfill(3)}"
+    m = re.match(r"^(?:TIENDA|LOCAL|RESTAURANTE)\s+#?(\d{1,3})$", s)
+    if m:
+        return f"R{m.group(1).zfill(3)}"
+    return s
 
 
 # ── Filtros ───────────────────────────────────────────────────────────
@@ -532,6 +545,194 @@ def restaurant_info(ds: Dataset, rid: str) -> dict | None:
                or (c == "domicilio" and r["domicilio"] == "si") or any(a["canal"] == c for a in lst)]
     return {**public_restaurant(r), "canales": canales, "anomalias": stats(lst),
             "por_canal": [{"canal": c, **stats([a for a in lst if a["canal"] == c])} for c in canales]}
+
+
+def restaurant_window(ds: Dataset, raw_restaurante: str, fecha_inicio: str, fecha_fin: str) -> dict:
+    """Ficha del restaurante + espina diaria continua (sin huecos) entre fecha_inicio y fecha_fin.
+
+    Combina restaurants_dim, series_summary y alerts_prioritized marcando explícitamente cada día y
+    canal activo como ANOMALIA, EXCLUIDO (con exclusion_reason), NORMAL o SIN_REGISTRO.
+    """
+    rid = normalize_restaurant_id(raw_restaurante)
+    r = ds.rest_by_id.get(rid)
+    if not r:
+        return {"error": f"No existe el restaurante «{raw_restaurante}» (normalizado: {rid})."}
+    if not is_iso(fecha_inicio) or not is_iso(fecha_fin):
+        return {"error": "Fechas no válidas. Usa formato AAAA-MM-DD."}
+    d_from, d_to = (fecha_inicio, fecha_fin) if fecha_inicio <= fecha_fin else (fecha_fin, fecha_inicio)
+    d_from = max(d_from, ds.date_min)
+    d_to = min(d_to, ds.date_max)
+    aviso_rango = None
+    span = day_diff(d_from, d_to) + 1
+    if span > 120:
+        d_to = add_days(d_from, 119)
+        span = 120
+        aviso_rango = f"Ventana limitada a 120 días ({d_from} → {d_to}) para mantener el detalle diario completo."
+
+    rows = repo.series_rows(rid, None, d_from, d_to)
+    by_key = {(x["fecha"], x["canal"]): x for x in rows}
+    alerts_win = sorted(
+        (a for a in ds.anomalies if a["restaurante_id"] == rid and d_from <= a["fecha"] <= d_to),
+        key=lambda a: (a["fecha"], a["canal"]),
+    )
+    alerts_by_key = {(a["fecha"], a["canal"]): a for a in alerts_win}
+
+    # Canales realmente activos: maestro (restaurants_dim) + cualquier canal observado en la ventana o en alertas.
+    canales_set = set(active_channels(r))
+    canales_set.update(x["canal"] for x in rows if x.get("canal") in CHANNELS)
+    canales_set.update(a["canal"] for a in alerts_win if a.get("canal") in CHANNELS)
+    canales_activos = [c for c in CHANNELS if c in canales_set]
+    tiene_otros_canales = len(canales_activos) > 1
+
+    ventana_diaria: list[dict] = []
+    dias_sin_registro: list[dict] = []
+    dias_excluidos: list[dict] = []
+    dias_con_registro = 0
+
+    for offset in range(span):
+        fecha = add_days(d_from, offset)
+        dia_nombre = DIAS[dt.date.fromisoformat(fecha).isoweekday()]
+        missing_ch: list[str] = []
+        day_has_any = False
+        for ch in canales_activos:
+            row = by_key.get((fecha, ch))
+            an = alerts_by_key.get((fecha, ch))
+            if row is None and an is None:
+                missing_ch.append(ch)
+                ventana_diaria.append({
+                    "fecha": fecha,
+                    "dia": dia_nombre[:3],
+                    "canal": ch,
+                    "estado": "SIN_REGISTRO",
+                    "ventas": None,
+                    "ventas_esperadas": None,
+                    "tickets": None,
+                    "is_anomaly": False,
+                    "exclusion_reason": "SIN_REGISTRO",
+                })
+                continue
+            day_has_any = True
+            is_anom = bool(an or (row and row.get("is_anomaly")))
+            excl = None if is_anom else (row.get("exclusion_reason") if row else None)
+            if not is_anom and row and not excl and row.get("is_systemic_day"):
+                excl = "dia_neutro"
+            estado = "ANOMALIA" if is_anom else ("EXCLUIDO" if excl else "NORMAL")
+            pt: dict[str, Any] = {
+                "fecha": fecha,
+                "dia": dia_nombre[:3],
+                "canal": ch,
+                "estado": estado,
+                "ventas": r2(row["ventas"]) if row and row.get("ventas") is not None else (an["ventas"] if an else None),
+                "ventas_esperadas": (
+                    r2(row["ventas_esperadas"])
+                    if row and row.get("ventas_esperadas") is not None
+                    else (an["ventas_esperadas"] if an else None)
+                ),
+                "tickets": int(row["tickets"]) if row and row.get("tickets") is not None else (an["tickets"] if an else None),
+                "is_anomaly": is_anom,
+                "exclusion_reason": excl,
+            }
+            if is_anom and an:
+                pt["tipo"] = an["tipo"]
+                pt["impacto_eur"] = an["impacto"]
+                pt["desviacion_pct"] = an["desviacion_pct"]
+                pt["score"] = an["score"]
+                pt["episode_id"] = an.get("episode_id")
+                if an.get("incident_id"):
+                    pt["incident_id"] = an["incident_id"]
+            if row and row.get("tipo_festivo"):
+                pt["festivo"] = row["tipo_festivo"]
+            if row and row.get("fecha_especial"):
+                pt["fecha_especial"] = row["fecha_especial"]
+            ventana_diaria.append(pt)
+            if excl:
+                dias_excluidos.append({
+                    "fecha": fecha,
+                    "dia": dia_nombre,
+                    "canal": ch,
+                    "exclusion_reason": excl,
+                    "festivo": row.get("tipo_festivo") or None,
+                    "fecha_especial": row.get("fecha_especial") or None,
+                })
+        if day_has_any:
+            dias_con_registro += 1
+        if missing_ch:
+            dias_sin_registro.append({
+                "fecha": fecha,
+                "dia": dia_nombre,
+                "canales_sin_registro": missing_ch,
+            })
+
+    # Agrupar alertas de la ventana por episodio consolidado
+    ep_map: dict[str, list[dict]] = defaultdict(list)
+    for a in alerts_win:
+        ep_map[a.get("episode_id") or a["id"]].append(a)
+    episodios = []
+    for eid, grp in ep_map.items():
+        grp_s = sorted(grp, key=lambda x: x["fecha"])
+        episodios.append({
+            "episode_id": eid,
+            "canal": grp_s[0]["canal"],
+            "tipo": grp_s[0]["tipo"],
+            "fecha_inicio": grp_s[0].get("episode_start_date") or grp_s[0]["fecha"],
+            "fecha_fin": grp_s[0].get("episode_end_date") or grp_s[-1]["fecha"],
+            "alertas_en_ventana": len(grp_s),
+            "episode_days_total": grp_s[0].get("episode_days") or len(grp_s),
+            "fechas_alerta": [x["fecha"] for x in grp_s],
+            "impacto_ventana_eur": r2(sum(x["impacto"] for x in grp_s)),
+            "prioridad": grp_s[0]["prioridad"],
+        })
+    episodios.sort(key=lambda e: e["fecha_inicio"])
+
+    nota_canales = (
+        f"Este restaurante SOLO opera el canal {canales_activos[0]} (tiene_domicilio=False, tiene_autoking=False). "
+        "NO existen otros canales activos: nunca afirmes que domicilio o autoking fallaron."
+        if not tiene_otros_canales
+        else f"Canales activos del restaurante: {', '.join(canales_activos)}."
+    )
+    return {
+        "restaurante": {
+            **public_restaurant(r),
+            "canales_activos": canales_activos,
+            "tiene_otros_canales": tiene_otros_canales,
+            "nota_canales": nota_canales,
+        },
+        "periodo": {"desde": d_from, "hasta": d_to, "dias_calendario": span},
+        "aviso_rango": aviso_rango,
+        "resumen_ventana": {
+            "total_alertas": len(alerts_win),
+            "total_episodios": len(episodios),
+            "dias_con_registro": dias_con_registro,
+            "dias_sin_registro": len(dias_sin_registro),
+            "dias_excluidos": len(dias_excluidos),
+            "impacto_alertas_eur": r2(sum(a["impacto"] for a in alerts_win)),
+        },
+        "episodios_en_ventana": episodios,
+        "alertas_en_ventana": [
+            {
+                "id": a["id"], "fecha": a["fecha"], "canal": a["canal"], "tipo": a["tipo"],
+                "ventas": a["ventas"], "ventas_esperadas": a["ventas_esperadas"],
+                "tickets": a["tickets"], "tickets_esperados": a["tickets_esperados"],
+                "desviacion_pct": a["desviacion_pct"], "impacto_eur": a["impacto"],
+                "score": a["score"], "prioridad": a["prioridad"],
+                "episode_id": a.get("episode_id"), "incident_id": a.get("incident_id"),
+                "otros_canales_normales": a.get("otros_canales_normales"),
+                "estado_otros_canales": a.get("estado_otros_canales"),
+                "explicacion": a.get("explicacion"),
+            }
+            for a in alerts_win
+        ],
+        "dias_sin_registro": dias_sin_registro,
+        "dias_excluidos": dias_excluidos,
+        "ventana_diaria": ventana_diaria,
+        "eventos_macro_en_ventana": context_kb.macro_events_in_window(d_from, d_to, ccaa=r.get("ccaa")),
+        "playbooks_relevantes": context_kb.match_playbooks(
+            alerts=alerts_win,
+            active_channels=canales_activos,
+            missing_days_count=len(dias_sin_registro),
+            excluded_days_count=len(dias_excluidos),
+        ),
+    }
 
 
 def day_context(ds: Dataset, fecha: str, provincia: str | None = None) -> dict:

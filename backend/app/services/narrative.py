@@ -53,7 +53,9 @@ def short_explanation(a: dict) -> str:
     extra = []
     if a.get("z"):
         extra.append(f"{num(a['z'], 1)} veces su variabilidad habitual")
-    if a.get("otros_canales_normales") is True:
+    if a.get("tiene_otros_canales") is False:
+        extra.append("local monocanal")
+    elif a.get("otros_canales_normales") is True:
         extra.append("resto de canales normales")
     elif a.get("otros_canales_normales") is False:
         extra.append("también se desvían otros canales")
@@ -138,7 +140,9 @@ def build_detail(a: dict, ctx: dict) -> dict:
                             "incorpora ese movimiento.")
     otros = ctx.get("otros_canales") or []
     raros = [o for o in otros if o.get("desv") is not None and abs(o["desv"]) >= 0.25]
-    if otros:
+    if a.get("tiene_otros_canales") is False:
+        contexto.append(f"Este restaurante solo opera el canal {canal.lower()} (no dispone de otros canales activos).")
+    elif otros:
         if raros:
             contexto.append("Otros canales del restaurante también se desviaron: " + ", ".join(
                 f"{CHANNEL_LABEL.get(o['canal'], o['canal']).lower()} {pct(o['desv'])}" for o in raros) + ".")

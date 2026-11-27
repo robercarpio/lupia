@@ -30,14 +30,114 @@ DEFAULT_ENDPOINT = "databricks-claude-haiku-5-5"
 
 SYSTEM_PROMPT = (
     "Eres analista senior de Operaciones QSR en Restaurant Brands Europe (Burger King España). "
-    "Usa EXCLUSIVAMENTE los datos numéricos del JSON proporcionado. "
-    "REGLA ESTRICTA DEL RETO: NO inventes ni menciones causas externas no observadas "
-    "(PROHIBIDO escribir palabras como TPV, avería, corte eléctrico, obras, huelga, meteorología, tablet o fallo técnico). "
-    "Usa formato numérico español (miles con punto y decimales con coma, ej. 10.381 € y -99,9 %). "
-    "Devuelve SOLO un objeto JSON válido sin markdown con dos claves exactas: "
-    "'explicacion_negocio' (máximo 2 frases breves y claras en español de negocio con ventas/tickets reales vs esperados e impacto) y "
+    "Usa EXCLUSIVAMENTE los datos numéricos y hechos del JSON proporcionado. "
+    "REGLAS ESTRICTAS DE NEGOCIO Y ESTILO:\n"
+    "1. NO inventes ni menciones causas externas no observadas (PROHIBIDO escribir palabras como TPV, avería, corte eléctrico, obras, huelga, meteorología, tablet o fallo técnico).\n"
+    "2. IDIOMA 100 % ESPAÑOL: PROHIBIDO usar palabras en inglés como 'peer', 'peer group', 'group', 'also', 'score' o 'baseline'. Usa siempre 'locales comparables' o 'referencia de la zona'.\n"
+    "3. INTERPRETACIÓN DE 'diferencia_vs_locales_comparables_pct': este valor es (desviación_de_este_local − desviación_de_locales_comparables). "
+    "Un valor muy negativo (p. ej. -98 %) significa que ESTE local cayó 98 puntos porcentuales MÁS que sus locales comparables (es una caída propia y aislada de este local; NUNCA digas que los locales comparables cayeron igual ni de forma similar o idéntica). "
+    "Un valor muy positivo significa que ESTE local subió mucho más que sus locales comparables.\n"
+    "4. OTROS CANALES: respeta estrictamente el campo 'estado_otros_canales'. Si indica que el local solo opera un canal, NO menciones otros canales.\n"
+    "5. Usa formato numérico español (miles con punto y decimales con coma, ej. 10.381 € y -99,9 %).\n"
+    "6. Devuelve SOLO un objeto JSON válido sin markdown con dos claves exactas: "
+    "'explicacion_negocio' (máximo 2 frases breves y claras en español de negocio con ventas/tickets reales vs esperados, impacto y comparativa con locales comparables) y "
     "'recomendacion_revision' (1 frase operativa concreta: confirmar apertura/registro completo en caídas o revisar duplicidad/campaña puntual en subidas)."
 )
+
+FORBIDDEN_WORDS_RE = re.compile(
+    r"\b(peer|group|also|score|baseline|tpv|aver[ií]a|el[eé]ctric\w*|obras|huelga|meteorolog\w*|tablet|fallo\s+t[eé]cnico)\b",
+    flags=re.IGNORECASE,
+)
+LOGICAL_INVERSION_RE = re.compile(
+    r"(id[eé]ntic\w*|similar\w*|igual\s+(?:a|que)\s+(?:la\s+de\s+)?(?:los\s+)?(?:locales|pares|red|comparables)"
+    r"|en\s+l[ií]nea\s+con\s+(?:los\s+)?(?:locales|pares|red|comparables)"
+    r"|los\s+locales\s+comparables\s+(?:también\s+)?cayeron"
+    r"|la\s+(?:red|zona)\s+(?:también\s+)?cayó\s+un\s+-?\d)",
+    flags=re.IGNORECASE,
+)
+OTHER_CHANNELS_MENTION_RE = re.compile(
+    r"(otros\s+canales|dem[aá]s\s+canales|resto\s+de\s+canales)",
+    flags=re.IGNORECASE,
+)
+
+
+def _build_llm_payload(ev_dict: dict) -> dict:
+    """Transform internal evidence JSON into an unambiguous all-Spanish payload for the LLM."""
+    diff_comp = float(
+        ev_dict.get("diferencia_vs_locales_comparables_pct", ev_dict.get("peer_delta_pct", 0.0))
+    )
+    if diff_comp <= -15.0:
+        interp_comp = (
+            f"Este restaurante cayó {abs(diff_comp):.1f} puntos porcentuales MÁS que sus locales comparables de la zona "
+            "(desviación propia de este restaurante; los comparables NO tuvieron esta caída)."
+        )
+    elif diff_comp >= 15.0:
+        interp_comp = (
+            f"Este restaurante subió {abs(diff_comp):.1f} puntos porcentuales MÁS que sus locales comparables de la zona "
+            "(desviación propia de este restaurante)."
+        )
+    else:
+        interp_comp = "Desviación moderada respecto a los locales comparables de la zona."
+
+    canales_activos = ev_dict.get("canales_activos_restaurante")
+    tiene_otros = ev_dict.get("tiene_otros_canales")
+    if tiene_otros is None and isinstance(canales_activos, list):
+        tiene_otros = len(canales_activos) > 1
+    estado_raw = ev_dict.get("estado_otros_canales")
+    if tiene_otros is False or estado_raw == "sin_otros_canales_activos":
+        estado_otros = "Este restaurante solo opera este canal (NO tiene otros canales activos; NO menciones otros canales)."
+    elif ev_dict.get("otros_canales_normales") is True or estado_raw == "otros_canales_normales":
+        estado_otros = "Los demás canales activos del restaurante operaron dentro de lo normal."
+    else:
+        estado_otros = "Otros canales activos del restaurante también mostraron desviación."
+
+    return {
+        "restaurante_id": ev_dict.get("restaurante_id"),
+        "canal": ev_dict.get("canal"),
+        "fecha": ev_dict.get("fecha"),
+        "tipo": ev_dict.get("tipo"),
+        "ventas_reales_eur": ev_dict.get("ventas_reales"),
+        "ventas_esperadas_eur": ev_dict.get("ventas_esperadas"),
+        "impacto_estimado_eur": ev_dict.get("impacto_eur"),
+        "desviacion_ventas_pct": ev_dict.get("desviacion_ventas_pct"),
+        "tickets_reales": ev_dict.get("tickets_reales"),
+        "tickets_esperados": ev_dict.get("tickets_esperados"),
+        "desviacion_tickets_pct": ev_dict.get("desviacion_tickets_pct"),
+        "ticket_medio_real_eur": ev_dict.get("ticket_medio_real"),
+        "ticket_medio_esperado_eur": ev_dict.get("ticket_medio_esperado"),
+        "diferencia_vs_locales_comparables_pct": round(diff_comp, 2),
+        "interpretacion_locales_comparables": interp_comp,
+        "canales_activos_restaurante": canales_activos or [ev_dict.get("canal")],
+        "estado_otros_canales": estado_otros,
+        "episodio_dias_con_alerta": ev_dict.get("episode_days", 1),
+        "episodio_fecha_inicio": ev_dict.get("episode_start_date"),
+        "episodio_fecha_fin": ev_dict.get("episode_end_date"),
+    }
+
+
+def _validate_llm_output(exp: str, rec: str, ev_dict: dict) -> list[str]:
+    """Validate LLM text against anglicisms, forbidden causes, logical inversions, and phantom channels."""
+    errors: list[str] = []
+    combined = f"{exp} {rec}"
+    bad_words = sorted({m.group(0) for m in FORBIDDEN_WORDS_RE.finditer(combined)})
+    if bad_words:
+        errors.append(f"Contiene palabras prohibidas o en inglés: {bad_words}")
+
+    diff_comp = float(
+        ev_dict.get("diferencia_vs_locales_comparables_pct", ev_dict.get("peer_delta_pct", 0.0))
+    )
+    if abs(diff_comp) >= 35.0 and LOGICAL_INVERSION_RE.search(exp):
+        errors.append(
+            f"Inversión lógica sobre locales comparables (diferencia={diff_comp:.1f} %): "
+            "no indiques que la caída/subida fue similar o idéntica a la de los comparables."
+        )
+
+    tiene_otros = ev_dict.get("tiene_otros_canales")
+    if tiene_otros is False and OTHER_CHANNELS_MENTION_RE.search(combined):
+        errors.append(
+            "El restaurante solo opera un canal activo: no menciones otros canales."
+        )
+    return errors
 
 
 def _resolve_auth_token(host: str, profile: str) -> str:
@@ -57,62 +157,87 @@ def _enrich_single_alert(
     endpoint_url: str,
     token: str,
 ) -> tuple[int, str, str, str]:
-    body_dict = {
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": ev_str},
-        ],
-        "max_tokens": 1800,
-    }
-    # Reasoning models on Databricks (-5-5) reject explicit `temperature`
-    if "5-5" not in endpoint_url and "opus-5" not in endpoint_url and "sonnet-5" not in endpoint_url:
-        body_dict["temperature"] = 0.1
-        body_dict["max_tokens"] = 500
-    payload = json.dumps(body_dict).encode("utf-8")
-    req = urllib.request.Request(
-        endpoint_url,
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    body = None
-    for attempt in range(6):
-        try:
-            with urllib.request.urlopen(req, timeout=45) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-            break
-        except urllib.error.HTTPError as err:
-            if err.code in (429, 502, 503, 504) and attempt < 5:
-                time.sleep(min(20.0, (1.8 ** attempt) + random.uniform(0.2, 1.0)))
-                continue
-            raise
-    assert body is not None
-
-    content = body["choices"][0]["message"]["content"]
-    if isinstance(content, list):
-        content = "".join(
-            p.get("text", "")
-            for p in content
-            if isinstance(p, dict) and p.get("type", "text") == "text"
-        )
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", str(content).strip(), flags=re.DOTALL).strip()
-    m = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
-    if m:
-        cleaned = m.group(0)
-    parsed = json.loads(cleaned)
-
-    exp = str(parsed.get("explicacion_negocio", "")).strip()
-    rec = str(parsed.get("recomendacion_revision", "")).strip()
-    if not exp or not rec:
-        raise ValueError(f"Missing keys in LLM JSON response for idx={idx}: {cleaned[:160]}")
-
     ev_dict = json.loads(ev_str)
-    ev_dict["resumen"] = exp
-    ev_dict["recomendacion"] = rec
-    return idx, exp, rec, json.dumps(ev_dict, ensure_ascii=False)
+    llm_input = json.dumps(_build_llm_payload(ev_dict), ensure_ascii=False)
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": llm_input},
+    ]
+
+    last_err = "No valid response"
+    for val_attempt in range(3):
+        body_dict = {
+            "messages": messages,
+            "max_tokens": 1800,
+        }
+        # Reasoning models on Databricks (-5-5) reject explicit `temperature`
+        if "5-5" not in endpoint_url and "opus-5" not in endpoint_url and "sonnet-5" not in endpoint_url:
+            body_dict["temperature"] = 0.1
+            body_dict["max_tokens"] = 500
+        payload = json.dumps(body_dict).encode("utf-8")
+        req = urllib.request.Request(
+            endpoint_url,
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        body = None
+        for attempt in range(6):
+            try:
+                with urllib.request.urlopen(req, timeout=45) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as err:
+                if err.code in (429, 502, 503, 504) and attempt < 5:
+                    time.sleep(min(20.0, (1.8 ** attempt) + random.uniform(0.2, 1.0)))
+                    continue
+                raise
+        assert body is not None
+
+        content = body["choices"][0]["message"]["content"]
+        if isinstance(content, list):
+            content = "".join(
+                p.get("text", "")
+                for p in content
+                if isinstance(p, dict) and p.get("type", "text") == "text"
+            )
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", str(content).strip(), flags=re.DOTALL).strip()
+        m = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if m:
+            cleaned = m.group(0)
+        parsed = json.loads(cleaned)
+
+        exp = str(parsed.get("explicacion_negocio", "")).strip()
+        rec = str(parsed.get("recomendacion_revision", "")).strip()
+        if not exp or not rec:
+            last_err = f"Missing keys in LLM JSON response for idx={idx}: {cleaned[:160]}"
+            continue
+
+        val_errors = _validate_llm_output(exp, rec, ev_dict)
+        if not val_errors:
+            ev_dict["resumen"] = exp
+            ev_dict["recomendacion"] = rec
+            return idx, exp, rec, json.dumps(ev_dict, ensure_ascii=False)
+
+        last_err = f"idx={idx} validation failed (attempt {val_attempt + 1}): {'; '.join(val_errors)}"
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": llm_input},
+            {"role": "assistant", "content": json.dumps({"explicacion_negocio": exp, "recomendacion_revision": rec}, ensure_ascii=False)},
+            {
+                "role": "user",
+                "content": (
+                    "Tu respuesta anterior incumplió estas reglas: "
+                    + " | ".join(val_errors)
+                    + ". Reescribe SOLO el JSON válido corrigiendo esos fallos."
+                ),
+            },
+        ]
+
+    raise ValueError(last_err)
 
 
 def main() -> int:
@@ -122,6 +247,7 @@ def main() -> int:
     parser.add_argument("--host", default=os.environ.get("DATABRICKS_HOST", DEFAULT_HOST))
     parser.add_argument("--profile", default=os.environ.get("DATABRICKS_CONFIG_PROFILE", DEFAULT_PROFILE))
     parser.add_argument("--workers", type=int, default=3)
+    parser.add_argument("--force", action="store_true", help="Regenerate Top-N alerts even if llm_cached=True.")
     args = parser.parse_args()
 
     out_dir = get_outputs_dir()
@@ -133,6 +259,8 @@ def main() -> int:
     alerts_df = alerts_df.sort_values("score", ascending=False, kind="mergesort").reset_index(drop=True)
 
     top_n = min(args.top_n, len(alerts_df))
+    if args.force:
+        alerts_df.loc[: top_n - 1, "llm_cached"] = False
     todo = [i for i in range(top_n) if not bool(alerts_df.at[i, "llm_cached"])]
     print(f"Top-{top_n} LLM check: already_cached={top_n - len(todo)} | pending={len(todo)} | endpoint={args.endpoint}")
 

@@ -252,6 +252,40 @@ SELECT
 FROM rbe.alerts_prioritized
 GROUP BY episode_id, restaurante_id, canal, tipo;
 
+CREATE OR REPLACE VIEW rbe.v_alert_incidents AS
+WITH ordered AS (
+    SELECT
+        *,
+        LAG(fecha) OVER (PARTITION BY restaurante_id ORDER BY fecha, canal) AS prev_fecha
+    FROM rbe.alerts_prioritized
+),
+flagged AS (
+    SELECT
+        *,
+        SUM(CASE WHEN prev_fecha IS NULL OR (fecha - prev_fecha) > 1 THEN 1 ELSE 0 END)
+            OVER (PARTITION BY restaurante_id ORDER BY fecha, canal ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS inc_seq
+    FROM ordered
+)
+SELECT
+    'INC_' || restaurante_id || '_' || TO_CHAR(MIN(fecha), 'YYYYMMDD') AS incident_id,
+    restaurante_id,
+    MIN(comunidad_autonoma)                                            AS comunidad_autonoma,
+    MIN(provincia)                                                     AS provincia,
+    MIN(fecha)                                                         AS fecha_inicio,
+    MAX(fecha)                                                         AS fecha_fin,
+    COUNT(*)::INTEGER                                                  AS total_alertas,
+    COUNT(DISTINCT canal)::INTEGER                                     AS canales_afectados_num,
+    ARRAY_AGG(DISTINCT canal ORDER BY canal)                           AS canales_afectados,
+    (COUNT(DISTINCT canal) > 1)                                        AS es_multicanal,
+    ARRAY_AGG(DISTINCT episode_id ORDER BY episode_id)                 AS episode_ids,
+    MAX(score)                                                         AS max_score,
+    MAX(priority_score)                                                AS max_priority_score,
+    MIN(prioridad_nivel)                                               AS prioridad_nivel,
+    SUM(impacto_estimado_eur)                                          AS impacto_total_eur,
+    SUM(impacto_abs_eur)                                               AS impacto_abs_total_eur
+FROM flagged
+GROUP BY restaurante_id, inc_seq;
+
 CREATE OR REPLACE VIEW rbe.v_kpi_global AS
 SELECT
     COUNT(*)                                                                  AS total_alertas_dia,

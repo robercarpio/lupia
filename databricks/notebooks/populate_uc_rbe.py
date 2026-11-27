@@ -290,6 +290,45 @@ c_dim = _load_staged_parquet_to_uc(STAGE_DIR / "gold_restaurants_dim.parquet", "
 c_series = _load_staged_parquet_to_uc(STAGE_DIR / "gold_series_summary.parquet", "series_summary")
 c_alerts = _load_staged_parquet_to_uc(STAGE_DIR / "gold_alerts_prioritized.parquet", "alerts_prioritized")
 
+# Ensure restaurant-level multi-channel incident view (+-1d window) exists alongside legacy views
+spark.sql(f"""
+CREATE OR REPLACE VIEW {CATALOG_SCHEMA}.v_alert_incidents AS
+WITH ordered AS (
+    SELECT
+        *,
+        LAG(fecha) OVER (PARTITION BY restaurante_id ORDER BY fecha, canal) AS prev_fecha
+    FROM {CATALOG_SCHEMA}.alerts_prioritized
+),
+flagged AS (
+    SELECT
+        *,
+        SUM(CASE WHEN prev_fecha IS NULL OR DATEDIFF(fecha, prev_fecha) > 1 THEN 1 ELSE 0 END)
+            OVER (PARTITION BY restaurante_id ORDER BY fecha, canal ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS inc_seq
+    FROM ordered
+)
+SELECT
+    CONCAT('INC_', restaurante_id, '_', DATE_FORMAT(MIN(fecha), 'yyyyMMdd')) AS incident_id,
+    restaurante_id,
+    MIN(comunidad_autonoma) AS comunidad_autonoma,
+    MIN(provincia) AS provincia,
+    MIN(fecha) AS fecha_inicio,
+    MAX(fecha) AS fecha_fin,
+    CAST(COUNT(*) AS INT) AS total_alertas,
+    CAST(COUNT(DISTINCT canal) AS INT) AS canales_afectados_num,
+    SORT_ARRAY(COLLECT_SET(canal)) AS canales_afectados,
+    COUNT(DISTINCT canal) > 1 AS es_multicanal,
+    SORT_ARRAY(COLLECT_SET(episode_id)) AS episode_ids,
+    MAX(score) AS max_score,
+    MAX(priority_score) AS max_priority_score,
+    MIN(prioridad_nivel) AS prioridad_nivel,
+    SUM(impacto_estimado_eur) AS impacto_total_eur,
+    SUM(impacto_abs_eur) AS impacto_abs_total_eur
+FROM flagged
+GROUP BY restaurante_id, inc_seq
+""")
+c_incidents = spark.table(f"{CATALOG_SCHEMA}.v_alert_incidents").count()
+print(f"Created/verified {CATALOG_SCHEMA}.v_alert_incidents: {c_incidents:,} incidents")
+
 # COMMAND ----------
 # 4. Export validated anomalias.csv to UC Volume uploads and clean temporary _stage/
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
