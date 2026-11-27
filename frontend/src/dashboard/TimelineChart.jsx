@@ -51,6 +51,11 @@ export default function TimelineChart({ data, onOpen, height = 330 }) {
   const p = pinned != null ? b[pinned] : null
   const label = (d) => (data.step === 7 ? `Semana del ${dateShort(d.from)}` : dateShort(d.from, { weekday: true }))
   const dev = (d) => (d.esperadas ? d.ventas / d.esperadas - 1 : null)
+  // En pantallas estrechas los puntos se encogen para no tapar la línea; el clic lo recoge la columna entera.
+  const compact = W < 560
+  const dotR = (n) => (compact
+    ? Math.min(Math.max(2.4, colW * 0.9), 4.2, 2 + Math.sqrt(n) * 0.6)
+    : Math.min(8, 3.6 + Math.sqrt(n) * 1.2))
 
   return (
     <div className="combo-wrap timeline" ref={ref}>
@@ -81,8 +86,8 @@ export default function TimelineChart({ data, onOpen, height = 330 }) {
           if (!n) return hover === i ? <circle key={i} cx={cx(i)} cy={y(d[RK])} r="4" fill="var(--purple)" stroke="var(--surface)" strokeWidth="2" pointerEvents="none" /> : null
           const down = d.caidas >= d.subidas
           return (
-            <circle key={i} cx={cx(i)} cy={y(d[RK])} r={Math.min(8, 3.6 + Math.sqrt(n) * 1.2) + (hover === i ? 1.5 : 0)}
-                    className="anom-dot" fill={down ? 'var(--down)' : 'var(--up)'} stroke="var(--surface)" strokeWidth="1.6"
+            <circle key={i} cx={cx(i)} cy={y(d[RK])} r={dotR(n) + (hover === i ? (compact ? 1 : 1.5) : 0)}
+                    className="anom-dot" fill={down ? 'var(--down)' : 'var(--up)'} stroke="var(--surface)" strokeWidth={compact ? 0.8 : 1.6}
                     onMouseEnter={() => setHover(i)} onClick={() => setPinned(i)} />
           )
         })}
