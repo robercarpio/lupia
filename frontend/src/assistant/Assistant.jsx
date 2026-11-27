@@ -125,14 +125,23 @@ export default function Assistant({ chat, meta, filters, onOpen, onDashboard, on
   // fragmento de texto se acumula y bloquea el móvil en conversaciones largas.
   useEffect(() => {
     if (!stick.current) return
-    const id = requestAnimationFrame(() => toBottom(!busy && messages.length >= 3))
+    // Se vuelve a comprobar al ejecutarse: el usuario puede haber tocado la pantalla entre medias.
+    const id = requestAnimationFrame(() => { if (stick.current) toBottom(!busy && messages.length >= 3) })
     return () => cancelAnimationFrame(id)
   }, [messages, busy])
+  const lastTop = useRef(0)
+  const touching = useRef(false)
   const onScroll = () => {
     const el = scroller.current
-    // Mientras no se sigue, la vista solo se mueve si la mueve el usuario: si llega al final, se reanuda.
-    if (el && !stick.current && el.scrollHeight - el.scrollTop - el.clientHeight < 8) follow(true)
+    if (!el) return
+    const down = el.scrollTop > lastTop.current
+    lastTop.current = el.scrollTop
+    // Solo se reanuda si el usuario BAJA él mismo hasta el final (con el dedo ya levantado,
+    // p. ej. al acabar la inercia). Arrastrar hacia arriba estando abajo no lo reactiva.
+    if (!stick.current && down && !touching.current && el.scrollHeight - el.scrollTop - el.clientHeight < 8) follow(true)
   }
+  const onTouchStart = () => { touching.current = true; stopFollowing() }
+  const onTouchEnd = () => { touching.current = false }
   const onKeyDown = (e) => { if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) stopFollowing() }
   const resume = () => { follow(true); toBottom(true) }
   const send = (t) => { follow(true); setShown(PAGE); chat.send(t) }
@@ -168,7 +177,8 @@ export default function Assistant({ chat, meta, filters, onOpen, onDashboard, on
 
   return (
     <div className="ai-view">
-      <div className="ai-scroll" ref={scroller} onScroll={onScroll} onTouchStart={stopFollowing}
+      <div className="ai-scroll" ref={scroller} onScroll={onScroll} onTouchStart={onTouchStart}
+           onTouchEnd={onTouchEnd} onTouchCancel={onTouchEnd}
            onWheel={stopFollowing} onPointerDown={stopFollowing} onKeyDown={onKeyDown}>
         <div className="ai-thread">
           <ModelBanner meta={meta} />
