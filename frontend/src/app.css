@@ -496,7 +496,8 @@
 .c-btn.send:disabled { background: var(--fill-strong); color: var(--muted); cursor: default; }
 .c-btn.send.stop { background: var(--bubble); }
 
-.ai-scroll { flex: 1; overflow-y: auto; scroll-behavior: smooth; }
+.ai-scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+.ai-more { align-self: center; }
 .ai-thread { width: min(820px, 100%); margin: 0 auto; padding: 28px 24px 24px; display: flex; flex-direction: column; gap: 22px; }
 .msg { display: flex; gap: 12px; animation: viewIn .36s var(--ease) both; }
 .msg.user { flex-direction: column; align-items: flex-end; }

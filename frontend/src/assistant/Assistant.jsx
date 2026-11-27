@@ -21,6 +21,8 @@ const greeting = () => {
   return h < 6 ? 'Buenas noches' : h < 14 ? 'Buenos días' : h < 21 ? 'Buenas tardes' : 'Buenas noches'
 }
 
+const PAGE = 16 // mensajes que se pintan de cada vez
+
 function Composer({ onSend, onStop, onCall, busy, autoFocus, big }) {
   const [text, setText] = useState('')
   const ref = useRef(null)
@@ -89,6 +91,24 @@ export default function Assistant({ chat, meta, filters, onOpen, onDashboard, on
   const endRef = useRef(null)
   const stick = useRef(true)
   const { messages, busy } = chat
+  // Solo se pintan los últimos mensajes: con conversaciones largas (tablas y gráficos
+  // en cada respuesta) el DOM crece sin límite y Safari en iOS acaba cerrando la pestaña.
+  const [shown, setShown] = useState(PAGE)
+  const hidden = Math.max(0, messages.length - shown)
+  const visible = hidden ? messages.slice(hidden) : messages
+  const keepPos = useRef(null)
+  useEffect(() => { if (!messages.length) setShown(PAGE) }, [messages.length])
+  // Al mostrar mensajes anteriores se mantiene la posición de lectura.
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (el && keepPos.current != null) { el.scrollTop = el.scrollHeight - keepPos.current; keepPos.current = null }
+  }, [shown])
+  const showMore = () => {
+    const el = scroller.current
+    if (el) keepPos.current = el.scrollHeight - el.scrollTop
+    stick.current = false
+    setShown((n) => n + PAGE)
+  }
   // Durante el streaming el scroll es instantáneo: una animación «smooth» por cada
   // fragmento de texto se acumula y bloquea el móvil en conversaciones largas.
   useEffect(() => {
@@ -100,7 +120,7 @@ export default function Assistant({ chat, meta, filters, onOpen, onDashboard, on
     const el = scroller.current
     if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140
   }
-  const send = (t) => { stick.current = true; chat.send(t) }
+  const send = (t) => { stick.current = true; setShown(PAGE); chat.send(t) }
 
   if (!messages.length) {
     return (
@@ -136,7 +156,10 @@ export default function Assistant({ chat, meta, filters, onOpen, onDashboard, on
       <div className="ai-scroll" ref={scroller} onScroll={onScroll}>
         <div className="ai-thread">
           <ModelBanner meta={meta} />
-          {messages.map((m) => (m.role === 'user'
+          {hidden > 0 && (
+            <button className="btn-chip ai-more" onClick={showMore}>Mostrar {Math.min(PAGE, hidden)} mensajes anteriores</button>
+          )}
+          {visible.map((m) => (m.role === 'user'
             ? <div key={m.id} className="msg user"><p>{m.text}</p>{m.voice && <small>por voz</small>}</div>
             : <MessageBoundary key={m.id}><AssistantMessage m={m} onOpen={onOpen} onDashboard={onDashboard} meta={meta} /></MessageBoundary>))}
           {!busy && messages.length > 0 && (
