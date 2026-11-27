@@ -35,5 +35,5 @@ databricks = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["databricks/tests"]
 pythonpath = ["."]

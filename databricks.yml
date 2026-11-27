@@ -7,7 +7,6 @@ bundle:
 sync:
   include:
     - databricks/**
-    - notebooks/**
     - sql/**
   exclude:
     - "**/__pycache__"

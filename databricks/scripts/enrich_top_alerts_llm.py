@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -253,7 +253,7 @@ def main() -> int:
     out_dir = get_outputs_dir()
     alerts_path = out_dir / "gold_alerts_prioritized.parquet"
     if not alerts_path.is_file():
-        raise FileNotFoundError(f"Missing {alerts_path}; run Notebooks 02-03 or scripts/run_pipeline.py first.")
+        raise FileNotFoundError(f"Missing {alerts_path}; run Notebooks 02-03 or databricks/scripts/run_pipeline.py first.")
 
     alerts_df = pd.read_parquet(alerts_path)
     alerts_df = alerts_df.sort_values("score", ascending=False, kind="mergesort").reset_index(drop=True)
