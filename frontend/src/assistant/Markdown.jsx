@@ -38,17 +38,24 @@ export default function Markdown({ text }) {
       blocks.push(<ol key={i}>{items.map((t, k) => <li key={k}>{inline(t, `o${k}`)}</li>)}</ol>)
       continue
     }
-    if (/^\s*\|.*\|\s*$/.test(l)) {
+    // Cualquier línea que empiece por «|» es una fila de tabla, aunque aún no termine en «|»:
+    // durante el streaming la fila llega a medias. (Antes esa línea no la cogía ni la tabla
+    // ni el párrafo y el bucle no avanzaba: la página se quedaba colgada.)
+    if (/^\s*\|/.test(l)) {
       const rows = []
-      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(lines[i++])
-      const cells = rows.filter((r) => !/^\s*\|[\s:|-]+\|\s*$/.test(r)).map((r) => r.trim().slice(1, -1).split('|').map((c) => c.trim()))
+      while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++])
+      const cells = rows
+        .filter((r) => !/^\s*\|[\s:|-]*$/.test(r))
+        .map((r) => r.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim()))
+      if (!cells.length) continue
       blocks.push(
         <div className="md-table" key={i}><table><thead><tr>{cells[0].map((c, k) => <th key={k}>{inline(c)}</th>)}</tr></thead>
           <tbody>{cells.slice(1).map((r, k) => <tr key={k}>{r.map((c, j) => <td key={j}>{inline(c)}</td>)}</tr>)}</tbody></table></div>
       )
       continue
     }
-    const para = []
+    // El párrafo siempre consume al menos su primera línea: así el bucle avanza pase lo que pase.
+    const para = [lines[i++]]
     while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|\s*[-*•]\s|\s*\d+[.)]\s|\s*\|)/.test(lines[i])) para.push(lines[i++])
     blocks.push(<p key={i}>{para.map((p, k) => <Fragment key={k}>{k > 0 && <br />}{inline(p, `p${k}`)}</Fragment>)}</p>)
   }
