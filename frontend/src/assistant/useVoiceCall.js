@@ -79,28 +79,38 @@ export function useVoiceCall({ send, abort }) {
     }
     u.onboundary = () => { r.pulse = performance.now() }
     u.onend = u.onerror = () => {
-      r.pending = Math.max(0, (r.pending || 1) - 1)
+      // Locución ya descartada (cancelada al interrumpir o por el vigilante): su «onend» llega
+      // tarde y no debe descontar las de la respuesta nueva.
+      if (!r.queue.delete(u)) return
       r.spoken = `${r.spoken || ''} ${t}`.slice(-600)
       r.speakEndAt = performance.now()
-      const natural = r.speaking === t // stopSpeaking() pone speaking=null antes de cancelar
-      if (!r.pending) {
-        r.speaking = null
-        if (r.replyDone && r.active) {
-          setP('listening')
-          // Sin reiniciar el reconocedor (perderíamos tus primeras palabras): lo que ya haya
-          // transcrito del resultado en curso es eco y se recorta de lo que llegue después.
-          if (!MOBILE && natural && r.curIdx != null) { r.echo = { idx: r.curIdx, text: r.curText || '' }; r.partial = ''; setInterim('') }
-        }
-        if (MOBILE && r.active && !r.muted && !r.rec) r.startRec()
-      }
+      if (!r.queue.size) r.afterSpeech(r.speaking === t) // stopSpeaking() pone speaking=null antes de cancelar
     }
-    r.pending = (r.pending || 0) + 1
+    // Se guarda la referencia: en Chrome, si la locución se recolecta, «onend» no llega nunca
+    // y la llamada se queda en «hablando» sin volver a escuchar.
+    r.queue.add(u)
+    r.lastSpeakAt = performance.now()
+    if (window.speechSynthesis.paused) window.speechSynthesis.resume() // Android a veces la deja en pausa
     window.speechSynthesis.speak(u)
   }, [r])
 
+  /** Fin de todo lo que había en cola: vuelve a escuchar. */
+  const afterSpeech = useCallback((natural) => {
+    r.speaking = null
+    if (r.replyDone && r.active) {
+      setP('listening')
+      // Sin reiniciar el reconocedor (perderíamos tus primeras palabras): lo que ya haya
+      // transcrito del resultado en curso es eco y se recorta de lo que llegue después.
+      if (!MOBILE && natural && r.curIdx != null) { r.echo = { idx: r.curIdx, text: r.curText || '' }; r.partial = ''; setInterim('') }
+    }
+    if (MOBILE && r.active && !r.muted && !r.rec) r.startRec()
+  }, [r])
+  r.afterSpeech = afterSpeech
+  r.queue ??= new Set()
+
   const stopSpeaking = useCallback(() => {
     r.buf = ''
-    r.pending = 0
+    r.queue.clear()
     r.speaking = null
     r.speakEndAt = performance.now()
     window.speechSynthesis?.cancel()
@@ -131,6 +141,8 @@ export function useVoiceCall({ send, abort }) {
     const q = text.trim()
     if (!q || !r.active) return
     dbg('frase enviada:', q)
+    const turn = (r.turn || 0) + 1
+    r.turn = turn
     stopSpeaking()
     abort()
     r.replyDone = false
@@ -141,16 +153,17 @@ export function useVoiceCall({ send, abort }) {
     try {
       reply = await send(q, {
         voice: true,
-        onText: (d) => { reply += d; feed(d); setTranscript((t) => upsertAssistant(t, reply)) },
-        onBlock: (b) => setBlocks((bs) => [b, ...bs].slice(0, 4)),
+        onText: (d) => { if (r.turn !== turn) return; reply += d; feed(d); setTranscript((t) => upsertAssistant(t, reply)) },
+        onBlock: (b) => { if (r.turn === turn) setBlocks((bs) => [b, ...bs].slice(0, 4)) },
       })
     } catch { /* el error se refleja en el chat */ }
-    if (!r.active) return
+    // Si mientras tanto empezó otra pregunta (interrupción), esta respuesta ya no manda.
+    if (!r.active || r.turn !== turn) return
     r.replyDone = true
     if (r.buf?.trim()) { speakQueue(r.buf); r.buf = '' }
-    if (!r.pending) setP('listening')
+    if (!r.queue.size) afterSpeech(false)
     if (!reply) setTranscript((t) => upsertAssistant(t, 'No he podido responder. Revisa el aviso en el chat del asistente.'))
-  }, [r, send, abort, feed, speakQueue, stopSpeaking])
+  }, [r, send, abort, feed, speakQueue, stopSpeaking, afterSpeech])
   r.handle = handleUtterance // versión más reciente para los callbacks del reconocedor
 
   // ── Micrófono ───────────────────────────────────────────────────────
@@ -234,7 +247,7 @@ export function useVoiceCall({ send, abort }) {
       if (part) {
         if (phaseRef.current === 'speaking') {
           if (isEcho(part) || words(part).length < 2) return // probablemente es su propia voz
-          stopSpeaking(); abort(); setP('listening') // interrupción por voz
+          r.turn = (r.turn || 0) + 1; stopSpeaking(); abort(); r.replyDone = true; setP('listening') // interrupción por voz
         }
         r.partial = part
         setInterim(part)
@@ -416,6 +429,7 @@ export function useVoiceCall({ send, abort }) {
 
   const end = useCallback(() => {
     r.active = false
+    r.turn = (r.turn || 0) + 1
     clearTimeout(r.commitTimer)
     const rec = r.rec
     r.rec = null
@@ -484,6 +498,24 @@ export function useVoiceCall({ send, abort }) {
   const getPulse = useCallback(() => r.pulse || 0, [r])
 
   useEffect(() => () => { if (r.active) end() }, [r, end])
+
+  // Vigilante de la síntesis de voz: iOS/Android a veces no disparan «onend» (audio interrumpido,
+  // pestaña en segundo plano…) y la llamada se quedaba muda en «hablando» para siempre.
+  useEffect(() => {
+    if (!['speaking', 'processing', 'listening'].includes(phase)) return
+    let idle = 0
+    const i = setInterval(() => {
+      const ss = window.speechSynthesis
+      if (!r.active || !r.queue.size || !ss) { idle = 0; return }
+      if (ss.speaking || ss.pending || performance.now() - (r.lastSpeakAt || 0) < 1500) { idle = 0; return }
+      if (++idle < 2) return
+      dbg('la síntesis no ha avisado del final: se recupera la escucha')
+      idle = 0
+      r.queue.clear()
+      afterSpeech(false)
+    }, 1000)
+    return () => clearInterval(i)
+  }, [phase, r, afterSpeech])
 
   // Detector de actividad de voz local: reacciona en ~50 ms, mucho antes que el reconocedor.
   useEffect(() => {

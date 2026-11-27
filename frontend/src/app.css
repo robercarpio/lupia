@@ -562,12 +562,15 @@
 
 .ai-dock { padding: 10px 24px 18px; background: linear-gradient(to top, var(--page) 60%, transparent); position: relative; }
 .ai-to-bottom {
-  position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); z-index: 2;
-  display: inline-flex; align-items: center; gap: 6px; height: 34px; min-width: 34px; padding: 0 10px; justify-content: center;
-  border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
-  font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; box-shadow: 0 6px 18px rgba(0, 0, 0, .25);
-  animation: fade .2s var(--ease);
+  position: absolute; left: 50%; bottom: calc(100% + 10px); transform: translateX(-50%); z-index: 3;
+  display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 16px 0 12px; white-space: nowrap;
+  border-radius: 999px; border: none; background: var(--purple); color: #fff;
+  font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
+  box-shadow: 0 8px 22px rgba(123, 108, 246, .45), 0 2px 6px rgba(0, 0, 0, .25);
+  animation: toBottomIn .22s var(--ease);
 }
+.ai-to-bottom:active { transform: translateX(-50%) scale(.96); }
+@keyframes toBottomIn { from { opacity: 0; transform: translate(-50%, 6px); } }
 .ai-dock-inner { width: min(820px, 100%); margin: 0 auto; }
 .ai-dock-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 6px; }
 .ai-dock-foot .ai-context { margin-top: 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }

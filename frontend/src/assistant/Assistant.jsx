@@ -199,7 +199,7 @@ export default function Assistant({ chat, meta, filters, onOpen, onDashboard, on
       <div className="ai-dock">
         {!following && (
           <button className="ai-to-bottom" onClick={resume} aria-label="Ir al final de la conversación">
-            <ArrowDown size={16} />{busy && <span>Ir al final</span>}
+            <ArrowDown size={16} strokeWidth={2.4} /><span>{busy ? 'Seguir la respuesta' : 'Ir al final'}</span>
           </button>
         )}
         <div className="ai-dock-inner">

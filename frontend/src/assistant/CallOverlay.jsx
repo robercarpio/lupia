@@ -87,7 +87,12 @@ const REC = { idle: 'Reconocimiento en pausa', starting: 'Activando el micrófon
 export default function CallOverlay({ call, onClose, onOpen, onDashboard, meta }) {
   const [title, hint] = PHASE[call.phase] || ['', '']
   const logRef = useRef(null)
-  useEffect(() => { logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' }) }, [call.transcript, call.interim])
+  // Scroll instantáneo y como mucho una vez por frame: con «smooth» en cada fragmento de texto
+  // las animaciones se acumulaban y el móvil iba a tirones durante la respuesta.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => { const el = logRef.current; if (el) el.scrollTop = el.scrollHeight })
+    return () => cancelAnimationFrame(id)
+  }, [call.transcript, call.interim])
   // Al llegar una tabla nueva, mostrarla desde arriba (tiene su propio scroll).
   const blocksRef = useRef(null)
   const firstBlock = call.blocks[0]?.key
