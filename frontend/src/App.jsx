@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AudioLines, RotateCcw } from 'lucide-react'
 import { DataVersion, filtersQuery, useApi, useDataStatus } from './api.js'
 import { dateShort } from './format.js'
 import Sidebar from './components/Sidebar.jsx'
@@ -175,10 +174,7 @@ export default function App() {
                           alerts={alerts} unseen={unseen} onSeen={markSeen} onAlerts={onBell} />
           ) : (
             <MobileHeader onHome={goHome} title="AI Assistant" subtitle="Texto o voz · mismos datos" theme={theme} onTheme={toggleTheme}
-                          alerts={alerts} unseen={unseen} onSeen={markSeen} onAlerts={onBell}>
-              <button className="btn-ghost" onClick={chat.reset} disabled={!chat.messages.length}><RotateCcw size={14} />Nueva</button>
-              <button className="btn-apply as-link" onClick={startCall}><AudioLines size={14} />Llamar</button>
-            </MobileHeader>
+                          alerts={alerts} unseen={unseen} onSeen={markSeen} onAlerts={onBell} />
           )
         ) : mode === 'dashboard' ? (
           <Topbar title="Detección de anomalías de ventas" subtitle={`${meta.restaurantes} restaurantes · datos hasta el ${dateShort(meta.dateMax)} · ${sourceLabel}`}
@@ -188,10 +184,7 @@ export default function App() {
           </Topbar>
         ) : (
           <Topbar title="AI Assistant" subtitle="Pregunta a tus datos por texto o por voz · mismos datos que el dashboard" theme={theme} onTheme={toggleTheme} alerts={alerts} unseen={unseen} onSeen={markSeen}
-                  onAlerts={onBell}>
-            <button className="btn-ghost" onClick={chat.reset} disabled={!chat.messages.length}><RotateCcw size={14} />Nueva conversación</button>
-            <button className="btn-apply as-link" onClick={startCall}><AudioLines size={14} />Llamar</button>
-          </Topbar>
+                  onAlerts={onBell} />
         )}
         <div className="mode-view" key={mode}>
           {mode === 'dashboard'

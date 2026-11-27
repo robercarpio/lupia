@@ -85,7 +85,9 @@ function Timer({ since }) {
 const REC = { idle: 'Reconocimiento en pausa', starting: 'Activando el micrófono…', ready: 'Micrófono activo · te escucho', speech: 'Detectando voz…' }
 
 export default function CallOverlay({ call, onClose, onOpen, onDashboard, meta }) {
-  const [title, hint] = PHASE[call.phase] || ['', '']
+  const [title, baseHint] = PHASE[call.phase] || ['', '']
+  // En móvil la escucha se pausa mientras habla el asistente (si no, se oiría a sí mismo): se interrumpe con el botón.
+  const hint = call.mobile && call.phase === 'speaking' ? 'Pulsa «Interrumpir y hablar» para cortarle' : baseHint
   const logRef = useRef(null)
   // El reconocedor del móvil se reinicia solo cada pocos segundos (≈200 ms en pausa): el botón
   // «Toca para hablar» solo aparece si lleva más de 1,2 s parado, para que no parpadee.
