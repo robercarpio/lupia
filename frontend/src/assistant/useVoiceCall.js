@@ -103,7 +103,7 @@ export function useVoiceCall({ send, abort }) {
       // transcrito del resultado en curso es eco y se recorta de lo que llegue después.
       if (!MOBILE && natural && r.curIdx != null) { r.echo = { idx: r.curIdx, text: r.curText || '' }; r.partial = ''; setInterim('') }
     }
-    if (MOBILE && r.active && !r.muted && !r.rec) r.startRec()
+    if (MOBILE && r.active && !r.muted && !r.rec && !r.needTap) r.startRec()
   }, [r])
   r.afterSpeech = afterSpeech
   r.queue ??= new Set()
@@ -220,7 +220,7 @@ export function useVoiceCall({ send, abort }) {
     setRecStatus('starting')
 
     r.curIdx = null; r.curText = ''; r.echo = null
-    rec.onstart = () => { if (r.rec === rec) setRecStatus('ready'); dbg('reconocimiento iniciado', r.local ? '(local)' : '(nube)', r.useTrack ? '· pista compartida' : '· micrófono del sistema') }
+    rec.onstart = () => { r.everStarted = true; r.needTap = false; if (r.rec === rec) setRecStatus('ready'); dbg('reconocimiento iniciado', r.local ? '(local)' : '(nube)', r.useTrack ? '· pista compartida' : '· micrófono del sistema') }
     rec.onspeechstart = () => { if (r.rec === rec) { setRecStatus('speech'); if (MOBILE) setHearing(true) } }
     rec.onspeechend = () => { if (r.rec === rec) { setRecStatus('ready'); if (MOBILE) setHearing(false) } }
     rec.onresult = (e) => {
@@ -296,6 +296,12 @@ export function useVoiceCall({ send, abort }) {
             : 'El navegador no permite usar su servicio de reconocimiento de voz.')
           break
         case 'not-allowed':
+          if (MOBILE && r.everStarted) {
+            // iOS puede negar el reinicio automático fuera de un gesto: se pide un toque, sin colgar.
+            r.needTap = true
+            setNotice('Toca «Hablar» para que vuelva a escucharte.')
+            break
+          }
           setError('Permiso de micrófono denegado. Actívalo en el icono del candado de la barra de direcciones y vuelve a intentarlo.')
           setP('error'); r.active = false
           break
@@ -309,7 +315,7 @@ export function useVoiceCall({ send, abort }) {
       setRecStatus('idle')
       if (MOBILE) setHearing(false)
       if (!r.active || r.muted || r.waitLocal) return
-      if (MOBILE && r.speaking) { r.rec = null; return } // se reanuda al terminar de hablar
+      if (MOBILE && (r.speaking || r.needTap)) { r.rec = null; return } // se reanuda al terminar de hablar o al tocar «Hablar»
       const delay = Math.min(4000, 200 * 2 ** Math.min(4, r.failures || 0))
       setTimeout(() => { if (r.rec === rec && r.active && !r.muted) r.startRec() }, delay)
     }
@@ -389,7 +395,25 @@ export function useVoiceCall({ send, abort }) {
       return
     }
     setP('connecting')
-    Object.assign(r, { useTrack: !MOBILE, local: false, waitLocal: false, failures: 0, noSpeech: 0, muted: false, partial: '', lastManual: null })
+    Object.assign(r, { useTrack: !MOBILE, local: false, waitLocal: false, failures: 0, noSpeech: 0, muted: false, partial: '', lastManual: null, everStarted: false, needTap: false })
+    if (MOBILE) {
+      // Móvil: el reconocedor se arranca YA, dentro del toque en «Llamar» (iOS solo concede el
+      // micrófono al reconocimiento desde un gesto) y sin getUserMedia: en iOS abrir y soltar el
+      // micrófono antes deja al reconocedor sin audio. El saludo va por escrito, no hablado,
+      // para no pasar el audio a reproducción justo cuando empieza a escuchar.
+      r.voice = pickVoice()
+      if (!r.voice) window.speechSynthesis.onvoiceschanged = () => { r.voice = pickVoice() }
+      r.volume = volume
+      r.active = true
+      r.replyDone = true
+      setMuted(false)
+      setStartedAt(Date.now())
+      setP('listening')
+      startRecognition()
+      setTranscript([{ role: 'assistant', text: 'Hola. Soy tu copiloto de ventas y anomalías. ¿Qué quieres saber? Te escucho.' }])
+      getJSON('/api/health').then((h) => setConnection(h.ai?.configured ? 'online' : 'no-ai')).catch(() => setConnection('offline'))
+      return
+    }
     try {
       await openMic(r.preferredDevice)
     } catch (e) {
@@ -472,6 +496,16 @@ export function useVoiceCall({ send, abort }) {
     } catch (e) { setNotice(`No se ha podido usar ese micrófono (${e.name}).`) }
   }, [r, openMic, startRecognition])
 
+  /** «Hablar»: arranca la escucha desde un toque (iOS) e interrumpe al asistente si está hablando. */
+  const listen = useCallback(() => {
+    if (!r.active) return
+    if (r.muted) { r.muted = false; setMuted(false) }
+    r.needTap = false
+    setNotice(null)
+    if (phaseRef.current === 'speaking') { r.turn = (r.turn || 0) + 1; stopSpeaking(); abort(); r.replyDone = true; setP('listening') }
+    startRecognition()
+  }, [r, startRecognition, stopSpeaking, abort])
+
   /** Envía lo que llevas dicho sin esperar a que el reconocedor detecte el silencio. */
   const sendNow = useCallback(() => {
     const text = (r.partial || '').trim()
@@ -539,7 +573,7 @@ export function useVoiceCall({ send, abort }) {
 
   return {
     phase, muted, volume, interim, hearing, transcript, blocks, error, notice, connection, recStatus, devices, deviceId, localStatus, startedAt,
-    start, end, toggleMute, setVolume, sendNow, selectDevice, installLocal, getLevel, getPulse,
+    start, end, toggleMute, setVolume, sendNow, selectDevice, installLocal, getLevel, getPulse, listen, mobile: MOBILE,
   }
 }
 

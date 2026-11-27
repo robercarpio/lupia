@@ -532,8 +532,12 @@ def system_prompt(ds: Dataset) -> str:
 - Si te preguntan algo ajeno a estos datos, reconduce amablemente."""
 
 
-VOICE_RULES = ("Modo voz: tu respuesta se leerá en voz alta. Responde en 1 a 3 frases naturales, sin Markdown, sin listas "
-               "ni tablas, con cifras redondeadas. Si hay una tabla o gráfico útil, usa mostrar=true y di que lo muestras en pantalla.")
+VOICE_RULES = ("Modo voz: tu respuesta se leerá en voz alta. Consulta exactamente las mismas herramientas, con los mismos "
+               "parámetros y periodo, que si la pregunta llegara por escrito, y da las mismas conclusiones y las mismas cifras "
+               "clave (puedes quitar los céntimos). Solo cambia la forma: frases naturales y breves, sin Markdown, sin listas "
+               "ni tablas. Si hay una tabla o gráfico útil, usa mostrar=true y di que lo muestras en pantalla. "
+               "La pregunta viene de un reconocedor de voz: interpreta números y códigos dichos en voz alta "
+               "(p. ej. «erre ciento veinticinco» = R125).")
 
 
 # ── Cliente del modelo (Azure OpenAI o Databricks Model Serving) ───────
@@ -563,6 +567,27 @@ def _llm():
 
     base_url, token = llm_credentials()
     return OpenAI(base_url=base_url, api_key=token, timeout=90, max_retries=2)
+
+
+_no_temperature = False  # el modelo rechazó «temperature»: no se vuelve a enviar
+
+
+def _create(client, **kw):
+    """chat.completions.create con temperatura fija (respuestas estables entre chat y voz).
+
+    Si el modelo no admite el parámetro (p. ej. modelos de razonamiento), se reintenta sin él."""
+    global _no_temperature
+    t = get_settings().ai_temperature
+    if t is None or _no_temperature:
+        return client.chat.completions.create(**kw)
+    try:
+        return client.chat.completions.create(**kw, temperature=t)
+    except Exception as e:  # noqa: BLE001
+        if getattr(e, "status_code", None) == 400 and "temperature" in str(e).lower():
+            log.warning("El modelo no admite temperature; se usa la del proveedor")
+            _no_temperature = True
+            return client.chat.completions.create(**kw)
+        raise
 
 
 # ── Sesiones ──────────────────────────────────────────────────────────
@@ -685,11 +710,9 @@ def chat_turn(body: dict) -> Iterator[str]:
         client = _llm()
         deployment = get_settings().ai_model
         for _ in range(8):
-            stream = client.chat.completions.create(
-                model=deployment,
-                messages=[{"role": "system", "content": system_prompt(ds)}, *_trim(session["messages"])],
-                tools=TOOLS, tool_choice="auto", stream=True,
-            )
+            stream = _create(client, model=deployment,
+                             messages=[{"role": "system", "content": system_prompt(ds)}, *_trim(session["messages"])],
+                             tools=TOOLS, tool_choice="auto", stream=True)
             text, calls = "", {}
             for chunk in stream:
                 if not chunk.choices:

@@ -87,6 +87,14 @@ const REC = { idle: 'Reconocimiento en pausa', starting: 'Activando el micrófon
 export default function CallOverlay({ call, onClose, onOpen, onDashboard, meta }) {
   const [title, hint] = PHASE[call.phase] || ['', '']
   const logRef = useRef(null)
+  // El reconocedor del móvil se reinicia solo cada pocos segundos (≈200 ms en pausa): el botón
+  // «Toca para hablar» solo aparece si lleva más de 1,2 s parado, para que no parpadee.
+  const [stalled, setStalled] = useState(false)
+  useEffect(() => {
+    if (call.recStatus !== 'idle') { setStalled(false); return }
+    const t = setTimeout(() => setStalled(true), 1200)
+    return () => clearTimeout(t)
+  }, [call.recStatus])
   // Scroll instantáneo y como mucho una vez por frame: con «smooth» en cada fragmento de texto
   // las animaciones se acumulaban y el móvil iba a tirones durante la respuesta.
   useEffect(() => {
@@ -135,6 +143,10 @@ export default function CallOverlay({ call, onClose, onOpen, onDashboard, meta }
           <Orb call={call} />
           <h2 className={`call-phase ${call.phase}`} aria-live="polite">{title}{call.phase === 'processing' && <i className="dots"><b /><b /><b /></i>}</h2>
           {live && <span className={`rec-pill ${call.muted ? 'off' : call.recStatus}`}>{call.muted ? 'Micrófono silenciado' : call.hearing && call.recStatus !== 'idle' ? 'Te oigo…' : REC[call.recStatus]}</span>}
+          {/* Móvil: si el reconocedor no está escuchando (iOS a veces no deja reiniciarlo solo), un toque lo arranca. */}
+          {live && call.mobile && !call.muted && (stalled || call.phase === 'speaking') && call.recStatus === 'idle' && call.phase !== 'processing' && (
+            <button className="call-talk" onClick={call.listen}><Mic size={16} />{call.phase === 'speaking' ? 'Interrumpir y hablar' : 'Toca para hablar'}</button>
+          )}
           {call.interim
             ? <p className="call-caption" aria-live="polite">“{call.interim}”<i className="caret" /></p>
             : call.hearing && call.phase === 'listening'

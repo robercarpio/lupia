@@ -81,6 +81,11 @@ class Settings:
     # p. ej. databricks-claude-sonnet-4-5. Se autentica igual que el warehouse (Service Principal de la
     # app o perfil del CLI). Si Azure OpenAI también está configurado, tiene prioridad Azure.
     llm_endpoint: str = field(default_factory=lambda: os.getenv("DATABRICKS_LLM_ENDPOINT", "").strip())
+    # Temperatura del copiloto. 0 = respuestas estables: la misma pregunta da los mismos datos por
+    # chat y por llamada. Vacío = la del proveedor (algunos modelos de razonamiento no la admiten).
+    ai_temperature: float | None = field(
+        default_factory=lambda: float(os.getenv("AI_TEMPERATURE", "0").strip()) if os.getenv("AI_TEMPERATURE", "0").strip() else None
+    )
 
     def __post_init__(self) -> None:
         if not _SCHEMA_RE.match(self.rbe_schema):

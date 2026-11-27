@@ -840,7 +840,9 @@
   .kv { grid-template-columns: 1fr; }
 
   /* Asistente: ocupa la pantalla entre cabecera y pestañas */
-  .is-mobile.mode-assistant .main { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+  /* flex: none — en la columna de .shell, «flex: 1» hacía que se ignorase la altura y .main crecía con
+     la conversación: hacía scroll la página entera y el cuadro de texto y el botón «Seguir la respuesta» se iban hacia abajo. */
+  .is-mobile.mode-assistant .main { flex: none; height: 100dvh; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
   .is-mobile .ai-view { flex: 1; min-height: 0; }
   .ai-welcome { padding: 20px 16px 16px; overflow-y: auto; }
   .ai-welcome .data-banner { margin-bottom: 16px; }
@@ -924,6 +926,12 @@
 .rec-pill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .rec-pill.ready { color: #4ee0c4; }
 .rec-pill.speech { color: #fff; background: rgba(25, 205, 177, .22); }
+.call-talk {
+  display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px; margin: 0 0 10px; border: none; border-radius: 999px;
+  background: #19cdb1; color: #06231e; font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 0 0 0 rgba(25, 205, 177, .5); animation: sendPulse 1.6s var(--ease) infinite;
+}
+.call-talk:active { transform: scale(.96); }
 .rec-pill.speech::before { animation: recBlink .8s ease-in-out infinite; }
 .rec-pill.idle, .rec-pill.starting { color: #f2c46b; }
 .rec-pill.off { color: #ff7d81; }
