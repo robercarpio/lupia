@@ -1,5 +1,5 @@
 import { Component, memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUp, AudioLines, Square, Sparkles, TrendingDown, Store, Truck, Car, MapPin, Search, Scale, CalendarClock, AlertCircle, RotateCcw } from 'lucide-react'
+import { ArrowUp, AudioLines, Square, Sparkles, TrendingDown, Store, Truck, Car, MapPin, Search, Scale, CalendarClock, AlertCircle, RotateCcw, ArrowDown } from 'lucide-react'
 import Markdown from './Markdown.jsx'
 import Block from './Blocks.jsx'
 import { ModelBanner } from '../dashboard/Dashboard.jsx'
@@ -106,21 +106,36 @@ export default function Assistant({ chat, meta, filters, onOpen, onDashboard, on
   const showMore = () => {
     const el = scroller.current
     if (el) keepPos.current = el.scrollHeight - el.scrollTop
-    stick.current = false
+    follow(false)
     setShown((n) => n + PAGE)
+  }
+  // Seguimiento del final de la conversación mientras se genera la respuesta.
+  // En cuanto el usuario toca la pantalla, usa la rueda o arrastra la barra, deja de seguir:
+  // la respuesta se sigue generando, pero la vista se queda donde está para poder leer.
+  // Vuelve a seguir si baja él mismo hasta el final o pulsa la flecha.
+  const [following, setFollowing] = useState(true)
+  const follow = (on) => { stick.current = on; setFollowing(on) }
+  // Solo importa mientras llega una respuesta: con la conversación quieta un toque no cambia nada.
+  const stopFollowing = () => { if (stick.current && busy) follow(false) }
+  const toBottom = (smooth) => {
+    const el = scroller.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
   }
   // Durante el streaming el scroll es instantáneo: una animación «smooth» por cada
   // fragmento de texto se acumula y bloquea el móvil en conversaciones largas.
   useEffect(() => {
     if (!stick.current) return
-    const id = requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: busy || messages.length < 3 ? 'auto' : 'smooth' }))
+    const id = requestAnimationFrame(() => toBottom(!busy && messages.length >= 3))
     return () => cancelAnimationFrame(id)
   }, [messages, busy])
   const onScroll = () => {
     const el = scroller.current
-    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140
+    // Mientras no se sigue, la vista solo se mueve si la mueve el usuario: si llega al final, se reanuda.
+    if (el && !stick.current && el.scrollHeight - el.scrollTop - el.clientHeight < 8) follow(true)
   }
-  const send = (t) => { stick.current = true; setShown(PAGE); chat.send(t) }
+  const onKeyDown = (e) => { if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) stopFollowing() }
+  const resume = () => { follow(true); toBottom(true) }
+  const send = (t) => { follow(true); setShown(PAGE); chat.send(t) }
 
   if (!messages.length) {
     return (
@@ -153,7 +168,8 @@ export default function Assistant({ chat, meta, filters, onOpen, onDashboard, on
 
   return (
     <div className="ai-view">
-      <div className="ai-scroll" ref={scroller} onScroll={onScroll}>
+      <div className="ai-scroll" ref={scroller} onScroll={onScroll} onTouchStart={stopFollowing}
+           onWheel={stopFollowing} onPointerDown={stopFollowing} onKeyDown={onKeyDown}>
         <div className="ai-thread">
           <ModelBanner meta={meta} />
           {hidden > 0 && (
@@ -171,6 +187,11 @@ export default function Assistant({ chat, meta, filters, onOpen, onDashboard, on
         </div>
       </div>
       <div className="ai-dock">
+        {!following && (
+          <button className="ai-to-bottom" onClick={resume} aria-label="Ir al final de la conversación">
+            <ArrowDown size={16} />{busy && <span>Ir al final</span>}
+          </button>
+        )}
         <div className="ai-dock-inner">
           <Composer onSend={send} onStop={chat.abort} onCall={onCall} busy={busy} autoFocus />
           <div className="ai-dock-foot">
