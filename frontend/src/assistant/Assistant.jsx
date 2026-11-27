@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Component, memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ArrowUp, AudioLines, Square, Sparkles, TrendingDown, Store, Truck, Car, MapPin, Search, Scale, CalendarClock, AlertCircle, RotateCcw } from 'lucide-react'
 import Markdown from './Markdown.jsx'
 import Block from './Blocks.jsx'
@@ -51,7 +51,21 @@ function Composer({ onSend, onStop, onCall, busy, autoFocus, big }) {
   )
 }
 
-function AssistantMessage({ m, onOpen, onDashboard, meta }) {
+// Si un bloque (tabla, gráfico…) falla al pintarse, solo se pierde ese mensaje, no toda la app.
+class MessageBoundary extends Component {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch(e) { console.error('Error al mostrar un mensaje del asistente', e) }
+  render() {
+    if (this.state.failed) {
+      return <div className="msg assistant"><span className="ai-avatar" aria-hidden /><div className="msg-body"><div className="ai-error"><AlertCircle size={15} /><span>No se ha podido mostrar esta respuesta.</span></div></div></div>
+    }
+    return this.props.children
+  }
+}
+
+// Memorizado: al llegar texto nuevo solo se repinta el mensaje que cambia, no toda la conversación.
+const AssistantMessage = memo(function AssistantMessage({ m, onOpen, onDashboard, meta }) {
   const empty = !m.parts.length
   return (
     <div className="msg assistant">
@@ -68,16 +82,20 @@ function AssistantMessage({ m, onOpen, onDashboard, meta }) {
       </div>
     </div>
   )
-}
+})
 
 export default function Assistant({ chat, meta, filters, onOpen, onDashboard, onCall, aiStatus }) {
   const scroller = useRef(null)
   const endRef = useRef(null)
   const stick = useRef(true)
   const { messages, busy } = chat
+  // Durante el streaming el scroll es instantáneo: una animación «smooth» por cada
+  // fragmento de texto se acumula y bloquea el móvil en conversaciones largas.
   useEffect(() => {
-    if (stick.current) endRef.current?.scrollIntoView({ block: 'end', behavior: messages.length < 3 ? 'auto' : 'smooth' })
-  }, [messages])
+    if (!stick.current) return
+    const id = requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: 'end', behavior: busy || messages.length < 3 ? 'auto' : 'smooth' }))
+    return () => cancelAnimationFrame(id)
+  }, [messages, busy])
   const onScroll = () => {
     const el = scroller.current
     if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140
@@ -120,7 +138,7 @@ export default function Assistant({ chat, meta, filters, onOpen, onDashboard, on
           <ModelBanner meta={meta} />
           {messages.map((m) => (m.role === 'user'
             ? <div key={m.id} className="msg user"><p>{m.text}</p>{m.voice && <small>por voz</small>}</div>
-            : <AssistantMessage key={m.id} m={m} onOpen={onOpen} onDashboard={onDashboard} meta={meta} />))}
+            : <MessageBoundary key={m.id}><AssistantMessage m={m} onOpen={onOpen} onDashboard={onDashboard} meta={meta} /></MessageBoundary>))}
           {!busy && messages.length > 0 && (
             <div className="followups">
               {SUGGESTIONS.slice(0, 3).map(({ text }) => <button key={text} className="btn-chip" onClick={() => send(text)}>{text}</button>)}
