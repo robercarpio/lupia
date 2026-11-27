@@ -99,7 +99,7 @@
 :root .sidebar { color: var(--side-ink); }
 :root .nav-item:hover { background: var(--side-hover); }
 :root .nav-item.active { background: rgba(0, 166, 251, 0.14); color: var(--side-accent); }
-:root .nav-bottom, :root .mode-switch { border-color: var(--side-line); }
+:root .mode-switch { border-color: var(--side-line); }
 :root .btn-apply:not(:disabled), :root .btn-ask, :root .user-avatar { background: var(--lupia-grad); }
 :root .btn-ask { box-shadow: 0 8px 24px var(--accent-glow); }
 :root .btn-ask:hover { box-shadow: 0 12px 30px var(--accent-glow); }

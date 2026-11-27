@@ -52,7 +52,6 @@ button, select { font: inherit; }
   display: grid; place-items: center; flex-shrink: 0;
 }
 .sidebar nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
-.nav-bottom { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid #2a2e37; padding-top: 12px; }
 .nav-item {
   display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px;
   border: none; border-radius: 8px; background: transparent; color: inherit; font-size: 14px;
@@ -217,7 +216,6 @@ button, select { font: inherit; }
   .sidebar { width: 100%; height: auto; position: static; flex-direction: row; align-items: center; padding: 10px 16px; }
   .sidebar nav { flex-direction: row; }
   .brand { padding: 0; }
-  .nav-bottom { display: none; }
   .topbar { padding: 16px; position: static; }
   .topbar-right, .filter-box { flex-wrap: wrap; }
   .content { padding: 16px; gap: 16px; }

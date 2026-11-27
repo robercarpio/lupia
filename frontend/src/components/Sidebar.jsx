@@ -1,4 +1,4 @@
-import { LayoutDashboard, AlertTriangle, Store, Map, FileBarChart, Settings, LogOut, Sparkles } from 'lucide-react'
+import { LayoutDashboard, AlertTriangle, Store, Map, FileBarChart, Sparkles } from 'lucide-react'
 import { Brand } from './Brand'
 
 // Secciones del dashboard (cada una hace scroll a su bloque).
@@ -42,10 +42,6 @@ export default function Sidebar({ mode = 'dashboard', onMode = () => {}, active 
         ))}
       </nav>
       <ModeSwitch mode={mode} onChange={onMode} />
-      <div className="nav-bottom">
-        <button className="nav-item" title="Ajustes"><Settings size={18} /> <span>Ajustes</span></button>
-        <button className="nav-item" title="Salir"><LogOut size={18} /> <span>Salir</span></button>
-      </div>
     </aside>
   )
 }
